@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>vpn-port-manager</Name>
+  <Repository>vpn-port-manager</Repository>
+  <Registry/>
+  <Network>br0</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Overview>Manages VPN port forwardings (Azire VPN), creates DNAT and firewall rules on UniFi Dream Machine Pro, and fires post-step hooks when ports change. Web UI for status and management.</Overview>
+  <Category>Network:Management Tools:</Category>
+  <WebUI>http://[IP]:[PORT:3000]</WebUI>
+  <Icon>/mnt/user/appdata/vpn-port-manager/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <Description>VPN Port Manager - manages port forwardings from VPN providers and creates corresponding UniFi network rules with post-step hooks (Plex, webhooks, commands).</Description>
+  <Networking>
+    <Mode>br0</Mode>
+    <Publish>
+      <Port>
+        <HostPort>3000</HostPort>
+        <ContainerPort>3000</ContainerPort>
+        <Protocol>tcp</Protocol>
+      </Port>
+    </Publish>
+  </Networking>
+  <Data>
+    <Volume>
+      <HostDir>/mnt/user/appdata/vpn-port-manager</HostDir>
+      <ContainerDir>/data</ContainerDir>
+      <Mode>rw</Mode>
+    </Volume>
+  </Data>
+  <Environment>
+    <Variable>
+      <Value>azire</Value>
+      <Name>VPN_PROVIDER</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>VPN_API_TOKEN</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>VPN_INTERNAL_IP</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>5</Value>
+      <Name>MAX_PORTS</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>UNIFI_HOST</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>UNIFI_USERNAME</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>UNIFI_PASSWORD</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value/>
+      <Name>UNIFI_VPN_INTERFACE</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>300000</Value>
+      <Name>SYNC_INTERVAL_MS</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>30</Value>
+      <Name>RENEW_THRESHOLD_DAYS</Name>
+      <Mode/>
+    </Variable>
+    <Variable>
+      <Value>3000</Value>
+      <Name>PORT</Name>
+      <Mode/>
+    </Variable>
+  </Environment>
+  <Labels/>
+  <Config Name="Web UI Port" Target="3000" Default="3000" Mode="tcp" Description="Port for the web management interface" Type="Port" Display="always" Required="true" Mask="false">3000</Config>
+  <Config Name="AppData" Target="/data" Default="/mnt/user/appdata/vpn-port-manager" Mode="rw" Description="Persistent storage for SQLite database" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/vpn-port-manager</Config>
+  <Config Name="VPN Provider" Target="VPN_PROVIDER" Default="azire" Mode="" Description="VPN provider name (currently: azire)" Type="Variable" Display="always" Required="true" Mask="false">azire</Config>
+  <Config Name="VPN API Token" Target="VPN_API_TOKEN" Default="" Mode="" Description="Bearer token for VPN provider API" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="VPN Internal IP" Target="VPN_INTERNAL_IP" Default="" Mode="" Description="Your internal VPN IP address (e.g. 10.0.16.181)" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Max Ports" Target="MAX_PORTS" Default="5" Mode="" Description="Maximum port forwardings allowed (Azire limit: 5)" Type="Variable" Display="always" Required="false" Mask="false">5</Config>
+  <Config Name="UniFi Host" Target="UNIFI_HOST" Default="" Mode="" Description="UDM-Pro address (e.g. https://192.168.1.1)" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="UniFi Username" Target="UNIFI_USERNAME" Default="" Mode="" Description="UniFi local account username" Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="UniFi Password" Target="UNIFI_PASSWORD" Default="" Mode="" Description="UniFi local account password" Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="UniFi VPN Interface" Target="UNIFI_VPN_INTERFACE" Default="wg0" Mode="" Description="WireGuard VPN interface name on UDM-Pro" Type="Variable" Display="always" Required="true" Mask="false">wg0</Config>
+  <Config Name="Sync Interval (ms)" Target="SYNC_INTERVAL_MS" Default="300000" Mode="" Description="How often the sync watchdog runs (milliseconds, default 5 min)" Type="Variable" Display="advanced" Required="false" Mask="false">300000</Config>
+  <Config Name="Renew Threshold (days)" Target="RENEW_THRESHOLD_DAYS" Default="30" Mode="" Description="Days before expiry to auto-renew ports" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
+</Container>
