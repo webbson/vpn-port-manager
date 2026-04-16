@@ -51,28 +51,26 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   async function checkProviderSync(): Promise<void> {
     const providerPorts = await provider.listPorts();
     const portSet = new Set(providerPorts.map((p) => p.port));
+    const nowSeconds = Math.floor(Date.now() / 1000);
 
     const mappings = db.listMappings().filter((m) => m.status !== "expired");
 
     for (const mapping of mappings) {
-      if (!portSet.has(mapping.vpnPort)) {
-        // Port is gone from provider — mark expired and clean up
+      if (portSet.has(mapping.vpnPort)) continue;
+
+      // Port is missing from provider. Two cases:
+      // 1. Truly expired (expiresAt in the past) → mark expired, clean up
+      // 2. Lost (provider restart, etc.) → re-create on provider, update downstream
+
+      if (mapping.expiresAt <= nowSeconds) {
+        // Case 1: Truly expired — mark expired and clean up UniFi rules
         db.updateMapping(mapping.id, { status: "expired" });
 
         if (mapping.unifiDnatId) {
-          try {
-            await unifi.deleteDnatRule(mapping.unifiDnatId);
-          } catch {
-            // ignore — rule may already be gone
-          }
+          try { await unifi.deleteDnatRule(mapping.unifiDnatId); } catch {}
         }
-
         if (mapping.unifiFirewallId) {
-          try {
-            await unifi.deleteFirewallRule(mapping.unifiFirewallId);
-          } catch {
-            // ignore
-          }
+          try { await unifi.deleteFirewallRule(mapping.unifiFirewallId); } catch {}
         }
 
         const payload: HookPayload = {
@@ -85,9 +83,62 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         };
         await fireHooks(mapping, payload);
 
-        db.logSync("sync_fix", mapping.id, {
-          reason: "port_missing_from_provider",
+        db.logSync("expired", mapping.id, {
+          reason: "port_expired",
           vpnPort: mapping.vpnPort,
+        });
+        continue;
+      }
+
+      // Case 2: Port lost but not expired — re-create on provider
+      const oldPort = mapping.vpnPort;
+      try {
+        const newProviderPort = await provider.createPort();
+        const newPort = newProviderPort.port;
+        const newExpiresAt = newProviderPort.expiresAt;
+
+        db.updateMapping(mapping.id, {
+          vpnPort: newPort,
+          expiresAt: newExpiresAt,
+          status: "active",
+        });
+
+        // Update existing UniFi rules in place with new port number
+        if (mapping.unifiDnatId) {
+          try {
+            await unifi.updateDnatRule(mapping.unifiDnatId, { dst_port: String(newPort) });
+          } catch {}
+        }
+        if (mapping.unifiFirewallId) {
+          try {
+            await unifi.updateFirewallRule(mapping.unifiFirewallId, { dst_port: String(newPort) });
+          } catch {}
+        }
+
+        const payload: HookPayload = {
+          mappingId: mapping.id,
+          label: mapping.label,
+          oldPort,
+          newPort,
+          destIp: mapping.destIp,
+          destPort: mapping.destPort,
+        };
+        await fireHooks(mapping, payload);
+
+        db.logSync("recreate", mapping.id, {
+          reason: "port_missing_from_provider",
+          oldPort,
+          newPort,
+          newExpiresAt,
+        });
+      } catch (err: unknown) {
+        // Re-creation failed — mark as error, next sync cycle will retry
+        const message = err instanceof Error ? err.message : String(err);
+        db.updateMapping(mapping.id, { status: "error" });
+        db.logSync("error", mapping.id, {
+          reason: "port_recreate_failed",
+          vpnPort: oldPort,
+          error: message,
         });
       }
     }

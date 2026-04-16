@@ -37,7 +37,71 @@ describe("SyncWatchdog", () => {
     db = createDb(":memory:");
   });
 
-  it("detects and removes expired ports not on provider", async () => {
+  it("re-creates ports missing from provider (not expired)", async () => {
+    const mappingId = db.createMapping({
+      provider: "azire",
+      vpnPort: 58216,
+      destIp: "192.168.1.100",
+      destPort: 8080,
+      protocol: "tcp",
+      label: "test",
+      status: "active",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400 * 30, // 30 days out — not expired
+    });
+    db.updateMapping(mappingId, {
+      unifiDnatId: "dnat-1",
+      unifiFirewallId: "fw-1",
+    });
+
+    // Provider returns empty list — port 58216 is gone (e.g., provider restart)
+    const provider = mockProvider([]);
+    const unifi = mockUnifi();
+
+    const watchdog = createSyncWatchdog({ db, provider, unifi, renewThresholdDays: 7 });
+    await watchdog.runOnce();
+
+    // Should re-create port, NOT mark as expired
+    expect(provider.createPort).toHaveBeenCalled();
+    const mapping = db.getMapping(mappingId)!;
+    expect(mapping.status).toBe("active");
+    expect(mapping.vpnPort).toBe(60000); // new port from mock
+    // UniFi rules updated in place with new port
+    expect(unifi.updateDnatRule).toHaveBeenCalledWith("dnat-1", { dst_port: "60000" });
+    expect(unifi.updateFirewallRule).toHaveBeenCalledWith("fw-1", { dst_port: "60000" });
+  });
+
+  it("marks truly expired ports (past expiresAt) as expired", async () => {
+    const mappingId = db.createMapping({
+      provider: "azire",
+      vpnPort: 58216,
+      destIp: "192.168.1.100",
+      destPort: 8080,
+      protocol: "tcp",
+      label: "test",
+      status: "active",
+      expiresAt: Math.floor(Date.now() / 1000) - 86400, // expired yesterday
+    });
+    db.updateMapping(mappingId, {
+      unifiDnatId: "dnat-1",
+      unifiFirewallId: "fw-1",
+    });
+
+    // Provider returns empty list — port is gone AND expired
+    const provider = mockProvider([]);
+    const unifi = mockUnifi();
+
+    const watchdog = createSyncWatchdog({ db, provider, unifi, renewThresholdDays: 7 });
+    await watchdog.runOnce();
+
+    // Should mark expired and delete UniFi rules, NOT re-create
+    expect(provider.createPort).not.toHaveBeenCalled();
+    const mapping = db.getMapping(mappingId)!;
+    expect(mapping.status).toBe("expired");
+    expect(unifi.deleteDnatRule).toHaveBeenCalledWith("dnat-1");
+    expect(unifi.deleteFirewallRule).toHaveBeenCalledWith("fw-1");
+  });
+
+  it("sets status to error when port re-creation fails", async () => {
     const mappingId = db.createMapping({
       provider: "azire",
       vpnPort: 58216,
@@ -48,22 +112,19 @@ describe("SyncWatchdog", () => {
       status: "active",
       expiresAt: Math.floor(Date.now() / 1000) + 86400 * 30,
     });
-    db.updateMapping(mappingId, {
-      unifiDnatId: "dnat-1",
-      unifiFirewallId: "fw-1",
-    });
 
-    // Provider returns empty list — port 58216 is missing
     const provider = mockProvider([]);
+    // createPort fails (provider is down)
+    (provider.createPort as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("Provider unreachable"));
     const unifi = mockUnifi();
 
     const watchdog = createSyncWatchdog({ db, provider, unifi, renewThresholdDays: 7 });
     await watchdog.runOnce();
 
     const mapping = db.getMapping(mappingId)!;
-    expect(mapping.status).toBe("expired");
-    expect(unifi.deleteDnatRule).toHaveBeenCalledWith("dnat-1");
-    expect(unifi.deleteFirewallRule).toHaveBeenCalledWith("fw-1");
+    expect(mapping.status).toBe("error");
+    // Port number unchanged since re-creation failed
+    expect(mapping.vpnPort).toBe(58216);
   });
 
   it("auto-renews ports expiring soon", async () => {
