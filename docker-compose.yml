@@ -1,0 +1,24 @@
+services:
+  vpn-port-manager:
+    build: .
+    container_name: vpn-port-manager
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - vpn-pm-data:/data
+    environment:
+      - VPN_PROVIDER=azire
+      - VPN_API_TOKEN=${VPN_API_TOKEN}
+      - VPN_INTERNAL_IP=${VPN_INTERNAL_IP}
+      - MAX_PORTS=5
+      - UNIFI_HOST=${UNIFI_HOST}
+      - UNIFI_USERNAME=${UNIFI_USERNAME}
+      - UNIFI_PASSWORD=${UNIFI_PASSWORD}
+      - UNIFI_VPN_INTERFACE=${UNIFI_VPN_INTERFACE}
+      - SYNC_INTERVAL_MS=300000
+      - RENEW_THRESHOLD_DAYS=30
+      - PORT=3000
+
+volumes:
+  vpn-pm-data:
