@@ -1,17 +1,19 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>vpn-port-manager</Name>
-  <Repository>vpn-port-manager</Repository>
-  <Registry/>
+  <Repository>webbson/vpn-port-manager:latest</Repository>
+  <Registry>https://hub.docker.com/r/webbson/vpn-port-manager/</Registry>
   <Network>br0</Network>
   <MyIP/>
   <Shell>sh</Shell>
   <Privileged>false</Privileged>
-  <Support/>
+  <Support>https://github.com/webbson/vpn-port-manager/issues</Support>
+  <Project>https://github.com/webbson/vpn-port-manager</Project>
+  <TemplateURL>https://raw.githubusercontent.com/webbson/vpn-port-manager/main/unraid/vpn-port-manager.xml</TemplateURL>
   <Overview>Manages VPN port forwardings (Azire VPN), creates DNAT and firewall rules on UniFi Dream Machine Pro, and fires post-step hooks when ports change. Web UI for status and management.</Overview>
   <Category>Network:Management Tools:</Category>
   <WebUI>http://[IP]:[PORT:3000]</WebUI>
-  <Icon>/mnt/user/appdata/vpn-port-manager/icon.png</Icon>
+  <Icon>https://raw.githubusercontent.com/webbson/vpn-port-manager/main/unraid/icon.png</Icon>
   <ExtraParams/>
   <PostArgs/>
   <CPUset/>
