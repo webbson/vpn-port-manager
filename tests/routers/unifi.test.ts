@@ -34,10 +34,15 @@ function mockResponse(
   } as unknown as Response;
 }
 
-function loginResponse(): Response {
+function loginResponse(extraHeaders: Record<string, string> = {}): Response {
   return mockResponse(
     { data: [] },
-    { headers: { "set-cookie": "TOKEN=abc123; Path=/; HttpOnly" } }
+    {
+      headers: {
+        "set-cookie": "TOKEN=abc123; Path=/; HttpOnly",
+        ...extraHeaders,
+      },
+    }
   );
 }
 
@@ -134,6 +139,39 @@ describe("UniFi RouterClient", () => {
     );
 
     expect(newHandle).toEqual({ dnatId: "nat-new", firewallId: "fw-old" });
+  });
+
+  it("sends captured CSRF token + TOKEN cookie on write requests", async () => {
+    fetchMock
+      .mockResolvedValueOnce(loginResponse({ "x-csrf-token": "csrf-xyz" }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ _id: "nat-1" }] }))
+      .mockResolvedValueOnce(mockResponse({ data: [{ _id: "fw-1" }] }));
+
+    const router = createRouter(settings);
+    await router.ensurePortForward(spec);
+
+    for (const idx of [1, 2]) {
+      const opts = fetchMock.mock.calls[idx][1] as RequestInit;
+      const h = opts.headers as Record<string, string>;
+      expect(h["X-CSRF-Token"]).toBe("csrf-xyz");
+      expect(h["Cookie"]).toBe("TOKEN=abc123");
+    }
+  });
+
+  it("refreshes CSRF token from x-updated-csrf-token response header", async () => {
+    fetchMock
+      .mockResolvedValueOnce(loginResponse({ "x-csrf-token": "initial" }))
+      .mockResolvedValueOnce(
+        mockResponse({ data: [{ _id: "nat-1" }] }, { headers: { "x-updated-csrf-token": "rotated" } })
+      )
+      .mockResolvedValueOnce(mockResponse({ data: [{ _id: "fw-1" }] }));
+
+    const router = createRouter(settings);
+    await router.ensurePortForward(spec);
+
+    const lastOpts = fetchMock.mock.calls[2][1] as RequestInit;
+    const h = lastOpts.headers as Record<string, string>;
+    expect(h["X-CSRF-Token"]).toBe("rotated");
   });
 
   it("testConnection returns ok on success", async () => {

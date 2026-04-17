@@ -54,15 +54,23 @@ function firewallRuleFor(spec: PortForwardSpec): Omit<FirewallRule, "_id"> {
 export function createUnifiRouter(settings: RouterSettings): RouterClient {
   const apiBase = `${settings.host}/proxy/network/api/s/default`;
   let cookie = "";
+  let csrfToken = "";
+
+  function captureCsrf(res: Response): void {
+    const updated = res.headers.get("x-updated-csrf-token") ?? res.headers.get("x-csrf-token");
+    if (updated) csrfToken = updated;
+  }
 
   async function request(path: string, opts: RequestInit = {}): Promise<unknown> {
     const url = `${apiBase}${path}`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       ...(cookie ? { Cookie: cookie } : {}),
+      ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...(opts.headers as Record<string, string> | undefined),
     };
     const res = await fetch(url, { ...opts, headers });
+    captureCsrf(res);
     if (res.status === 404) return null;
     if (!res.ok) {
       throw new Error(`UniFi API error (${res.status}): ${res.statusText}`);
@@ -83,7 +91,11 @@ export function createUnifiRouter(settings: RouterSettings): RouterClient {
       throw new Error(`UniFi login failed (${res.status}): ${res.statusText}`);
     }
     const setCookie = res.headers.get("set-cookie");
-    if (setCookie) cookie = setCookie.split(";")[0];
+    if (setCookie) {
+      const match = setCookie.match(/TOKEN=([^;]+)/);
+      cookie = match ? `TOKEN=${match[1]}` : setCookie.split(";")[0];
+    }
+    captureCsrf(res);
   }
 
   async function createDnatRule(rule: Omit<DnatRule, "_id">): Promise<string> {
