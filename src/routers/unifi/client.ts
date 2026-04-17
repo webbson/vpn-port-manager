@@ -73,7 +73,24 @@ export function createUnifiRouter(settings: RouterSettings): RouterClient {
     captureCsrf(res);
     if (res.status === 404) return null;
     if (!res.ok) {
-      throw new Error(`UniFi API error (${res.status}): ${res.statusText}`);
+      let detail = "";
+      try {
+        const raw = await res.clone().text();
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw) as { meta?: { msg?: string; rc?: string } };
+            const msg = parsed.meta?.msg;
+            detail = msg ? ` — ${msg}` : ` — ${raw.slice(0, 500)}`;
+          } catch {
+            detail = ` — ${raw.slice(0, 500)}`;
+          }
+        }
+      } catch {
+        /* ignore body read failure */
+      }
+      throw new Error(
+        `UniFi API error (${res.status} ${res.statusText}) on ${opts.method ?? "GET"} ${path}${detail}`
+      );
     }
     return res.json();
   }
