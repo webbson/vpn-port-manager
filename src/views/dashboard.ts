@@ -8,8 +8,9 @@ export interface DashboardStatus {
     activePorts: number;
     maxPorts: number;
   };
-  unifi: {
+  router: {
     connected: boolean;
+    name: string;
   };
 }
 
@@ -67,8 +68,9 @@ function mappingRow(m: MappingWithHooks): string {
 export function dashboardView(mappings: MappingWithHooks[], status: DashboardStatus): string {
   const providerDot = status.provider.connected ? 'ok' : 'err';
   const providerLabel = status.provider.connected ? 'Connected' : 'Disconnected';
-  const unifiDot = status.unifi.connected ? 'ok' : 'err';
-  const unifiLabel = status.unifi.connected ? 'Connected' : 'Disconnected';
+  const routerDot = status.router.connected ? 'ok' : 'err';
+  const routerLabel = status.router.connected ? 'Connected' : 'Disconnected';
+  const routerTitle = status.router.name === 'unifi' ? 'UniFi Controller' : `${status.router.name} router`;
 
   const tableBody = mappings.length === 0
     ? `<tr><td colspan="8">
@@ -96,10 +98,10 @@ export function dashboardView(mappings: MappingWithHooks[], status: DashboardSta
         </div>
       </div>
       <div class="card">
-        <h3>UniFi Controller</h3>
+        <h3>${escHtml(routerTitle)}</h3>
         <div class="health">
-          <span class="health-dot ${unifiDot}"></span>
-          ${unifiLabel}
+          <span class="health-dot ${routerDot}"></span>
+          ${routerLabel}
         </div>
       </div>
     </div>

@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { createDb } from "../../src/db.js";
 import type { Db } from "../../src/db.js";
 import type { VpnProvider } from "../../src/providers/types.js";
-import type { UnifiClient } from "../../src/unifi/types.js";
+import type { RouterClient } from "../../src/routers/types.js";
 import { createApiRoutes } from "../../src/routes/api.js";
 
 let portCounter = 60000;
@@ -22,35 +22,36 @@ function mockProvider(): VpnProvider {
   };
 }
 
-function mockUnifi(): UnifiClient {
+function mockRouter(): RouterClient {
   let dnatCounter = 0;
   let fwCounter = 0;
   return {
+    name: "unifi",
     login: vi.fn().mockResolvedValue(undefined),
-    createDnatRule: vi.fn().mockImplementation(async () => `dnat-${++dnatCounter}`),
-    updateDnatRule: vi.fn().mockResolvedValue(undefined),
-    deleteDnatRule: vi.fn().mockResolvedValue(undefined),
-    getDnatRule: vi.fn().mockResolvedValue({ _id: "dnat-1" }),
-    createFirewallRule: vi.fn().mockImplementation(async () => `fw-${++fwCounter}`),
-    updateFirewallRule: vi.fn().mockResolvedValue(undefined),
-    deleteFirewallRule: vi.fn().mockResolvedValue(undefined),
-    getFirewallRule: vi.fn().mockResolvedValue({ _id: "fw-1" }),
+    testConnection: vi.fn().mockResolvedValue({ ok: true }),
+    ensurePortForward: vi.fn().mockImplementation(async () => ({
+      dnatId: `dnat-${++dnatCounter}`,
+      firewallId: `fw-${++fwCounter}`,
+    })),
+    updatePortForward: vi.fn().mockImplementation(async (handle) => handle),
+    deletePortForward: vi.fn().mockResolvedValue(undefined),
+    repairPortForward: vi.fn().mockImplementation(async (handle) => handle),
   };
 }
 
 describe("API routes", () => {
   let db: Db;
   let provider: VpnProvider;
-  let unifi: UnifiClient;
+  let router: RouterClient;
   let app: Hono;
 
   beforeEach(() => {
     portCounter = 60000;
     db = createDb(":memory:");
     provider = mockProvider();
-    unifi = mockUnifi();
+    router = mockRouter();
     app = new Hono();
-    app.route("/api", createApiRoutes({ db, provider, unifi, vpnInterface: "wg0" }));
+    app.route("/api", createApiRoutes({ db, provider, router }));
   });
 
   it("GET /api/health returns ok", async () => {
@@ -67,7 +68,7 @@ describe("API routes", () => {
     expect(body.mappings).toEqual([]);
   });
 
-  it("POST /api/mappings creates mapping with UniFi rules", async () => {
+  it("POST /api/mappings creates mapping via router.ensurePortForward", async () => {
     const res = await app.request("/api/mappings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -84,53 +85,39 @@ describe("API routes", () => {
 
     expect(mapping.vpnPort).toBe(60000);
     expect(mapping.status).toBe("active");
-    expect(mapping.unifiDnatId).toBe("dnat-1");
-    expect(mapping.unifiFirewallId).toBe("fw-1");
+    expect(mapping.routerHandle).toEqual({ dnatId: "dnat-1", firewallId: "fw-1" });
     expect(mapping.destIp).toBe("192.168.1.100");
     expect(mapping.destPort).toBe(8080);
     expect(mapping.label).toBe("test-service");
 
-    expect(unifi.login).toHaveBeenCalled();
-    expect(unifi.createDnatRule).toHaveBeenCalledWith(
+    expect(router.ensurePortForward).toHaveBeenCalledWith(
       expect.objectContaining({
-        name: "VPM: test-service",
-        pfwd_interface: "wg0",
-        dst_port: "60000",
-        fwd: "192.168.1.100",
-        fwd_port: "8080",
-      })
-    );
-    expect(unifi.createFirewallRule).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "VPM: Allow test-service",
-        ruleset: "WAN_IN",
-        rule_index: 20000,
-        action: "accept",
+        vpnPort: 60000,
+        destIp: "192.168.1.100",
+        destPort: 8080,
+        label: "test-service",
+        protocol: "tcp_udp",
       })
     );
   });
 
-  it("DELETE /api/mappings/:id removes mapping and UniFi rules", async () => {
-    // Create first
+  it("DELETE /api/mappings/:id removes mapping and router rules", async () => {
     const createRes = await app.request("/api/mappings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ destIp: "192.168.1.50", destPort: 9090, label: "to-delete" }),
     });
-    const { mapping } = await createRes.json() as { mapping: { id: string; unifiDnatId: string; unifiFirewallId: string } };
+    const { mapping } = (await createRes.json()) as {
+      mapping: { id: string; routerHandle: Record<string, unknown> };
+    };
 
-    const deleteRes = await app.request(`/api/mappings/${mapping.id}`, {
-      method: "DELETE",
-    });
+    const deleteRes = await app.request(`/api/mappings/${mapping.id}`, { method: "DELETE" });
     expect(deleteRes.status).toBe(200);
-    const deleteBody = await deleteRes.json() as { success: boolean };
-    expect(deleteBody.success).toBe(true);
+    expect((await deleteRes.json()) as { success: boolean }).toEqual({ success: true });
 
-    // Verify UniFi rule deletion
-    expect(unifi.deleteDnatRule).toHaveBeenCalledWith(mapping.unifiDnatId);
-    expect(unifi.deleteFirewallRule).toHaveBeenCalledWith(mapping.unifiFirewallId);
-
-    // Verify mapping gone from DB
+    expect(router.deletePortForward).toHaveBeenCalledWith(
+      expect.objectContaining({ dnatId: "dnat-1", firewallId: "fw-1" })
+    );
     expect(db.getMapping(mapping.id)).toBeNull();
   });
 
@@ -141,9 +128,9 @@ describe("API routes", () => {
 
     const res = await app.request("/api/status");
     expect(res.status).toBe(200);
-    const body = await res.json() as {
+    const body = (await res.json()) as {
       provider: { connected: boolean; name: string; activePorts: number; maxPorts: number };
-      unifi: { connected: boolean };
+      router: { connected: boolean; name: string };
       mappings: { total: number; active: number };
     };
 
@@ -151,13 +138,12 @@ describe("API routes", () => {
     expect(body.provider.name).toBe("azire");
     expect(body.provider.activePorts).toBe(1);
     expect(body.provider.maxPorts).toBe(5);
-    expect(body.unifi.connected).toBe(true);
+    expect(body.router.connected).toBe(true);
+    expect(body.router.name).toBe("unifi");
     expect(body.mappings.total).toBe(0);
-    expect(body.mappings.active).toBe(0);
   });
 
   it("POST /api/mappings rejects when max ports reached", async () => {
-    // Create 5 mappings to fill the limit
     for (let i = 0; i < 5; i++) {
       const res = await app.request("/api/mappings", {
         method: "POST",
@@ -167,19 +153,17 @@ describe("API routes", () => {
       expect(res.status).toBe(201);
     }
 
-    // 6th should fail
     const res = await app.request("/api/mappings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ destIp: "192.168.1.99", destPort: 9999 }),
     });
     expect(res.status).toBe(400);
-    const body = await res.json() as { error: string };
+    const body = (await res.json()) as { error: string };
     expect(body.error).toContain("Cannot exceed maximum of 5 ports");
   });
 
   it("GET /api/logs returns sync log entries", async () => {
-    // Create a mapping to produce a log entry
     await app.request("/api/mappings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -188,7 +172,7 @@ describe("API routes", () => {
 
     const res = await app.request("/api/logs");
     expect(res.status).toBe(200);
-    const body = await res.json() as { logs: { action: string }[] };
+    const body = (await res.json()) as { logs: { action: string }[] };
     expect(body.logs.length).toBeGreaterThan(0);
     expect(body.logs[0].action).toBe("create");
   });

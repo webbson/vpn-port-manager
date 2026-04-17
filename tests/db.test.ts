@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createDb } from '../src/db.js';
 import type { Db } from '../src/db.js';
+import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 describe('Database layer', () => {
   let db: Db;
@@ -34,8 +38,7 @@ describe('Database layer', () => {
     expect(mapping!.protocol).toBe('tcp');
     expect(mapping!.label).toBe('test-mapping');
     expect(mapping!.status).toBe('pending');
-    expect(mapping!.unifiDnatId).toBeNull();
-    expect(mapping!.unifiFirewallId).toBeNull();
+    expect(mapping!.routerHandle).toEqual({});
     expect(mapping!.createdAt).toBeGreaterThan(0);
     expect(mapping!.updatedAt).toBeGreaterThan(0);
   });
@@ -51,7 +54,6 @@ describe('Database layer', () => {
 
     const mappings = db.listMappings();
     expect(mappings).toHaveLength(3);
-    // newest first — id3 was inserted last
     expect(mappings[0].id).toBe(id3);
     expect(mappings[1].id).toBe(id2);
     expect(mappings[2].id).toBe(id1);
@@ -61,12 +63,11 @@ describe('Database layer', () => {
     const id = db.createMapping(sampleMapping);
     const before = db.getMapping(id)!;
 
-    db.updateMapping(id, { status: 'active', unifiDnatId: 'dnat-123' });
+    db.updateMapping(id, { status: 'active', routerHandle: { dnatId: 'dnat-123', firewallId: 'fw-9' } });
 
     const after = db.getMapping(id)!;
     expect(after.status).toBe('active');
-    expect(after.unifiDnatId).toBe('dnat-123');
-    // unchanged fields stay the same
+    expect(after.routerHandle).toEqual({ dnatId: 'dnat-123', firewallId: 'fw-9' });
     expect(after.vpnPort).toBe(before.vpnPort);
     expect(after.destIp).toBe(before.destIp);
     expect(after.updatedAt).toBeGreaterThanOrEqual(before.updatedAt);
@@ -131,7 +132,6 @@ describe('Database layer', () => {
 
     const logs = db.getRecentLogs(10);
     expect(logs).toHaveLength(3);
-    // newest first (highest id last inserted = logs[0])
     expect(logs[0].action).toBe('sync');
     expect(logs[1].action).toBe('update');
     expect(logs[2].action).toBe('create');
@@ -146,5 +146,97 @@ describe('Database layer', () => {
     db.logSync('c', mappingId, {});
 
     expect(db.getRecentLogs(2)).toHaveLength(2);
+  });
+});
+
+describe('Database settings', () => {
+  let db: Db;
+
+  beforeEach(() => {
+    db = createDb(':memory:');
+  });
+
+  it('returns null for an unknown key', () => {
+    expect(db.getSetting('nope')).toBeNull();
+  });
+
+  it('upserts and reads back a plain setting', () => {
+    db.setSetting('app', JSON.stringify({ maxPorts: 5 }), false);
+    const row = db.getSetting('app');
+    expect(row).not.toBeNull();
+    expect(row!.encrypted).toBe(false);
+    expect(JSON.parse(row!.valueJson)).toEqual({ maxPorts: 5 });
+    expect(row!.updatedAt).toBeGreaterThan(0);
+  });
+
+  it('upserts updates the existing row', () => {
+    db.setSetting('vpn', 'v1:first', true);
+    const first = db.getSetting('vpn')!;
+    db.setSetting('vpn', 'v1:second', true);
+    const second = db.getSetting('vpn')!;
+    expect(second.valueJson).toBe('v1:second');
+    expect(second.encrypted).toBe(true);
+    expect(second.updatedAt).toBeGreaterThanOrEqual(first.updatedAt);
+  });
+
+  it('deletes a setting', () => {
+    db.setSetting('router', 'v1:x', true);
+    expect(db.getSetting('router')).not.toBeNull();
+    db.deleteSetting('router');
+    expect(db.getSetting('router')).toBeNull();
+  });
+});
+
+describe('Database legacy migration', () => {
+  let dir: string;
+  let file: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'vpm-test-'));
+    file = join(dir, 'legacy.db');
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('migrates unifi_* columns into router_handle and drops them', () => {
+    const seed = new Database(file);
+    seed.exec(`
+      CREATE TABLE port_mappings (
+        id              TEXT    PRIMARY KEY,
+        provider        TEXT    NOT NULL,
+        vpn_port        INTEGER NOT NULL,
+        dest_ip         TEXT    NOT NULL,
+        dest_port       INTEGER NOT NULL,
+        protocol        TEXT    NOT NULL DEFAULT 'both',
+        label           TEXT    NOT NULL DEFAULT '',
+        status          TEXT    NOT NULL DEFAULT 'pending',
+        expires_at      INTEGER NOT NULL,
+        unifi_dnat_id   TEXT,
+        unifi_firewall_id TEXT,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      );
+      INSERT INTO port_mappings (id, provider, vpn_port, dest_ip, dest_port,
+        protocol, label, status, expires_at, unifi_dnat_id, unifi_firewall_id,
+        created_at, updated_at)
+      VALUES ('a', 'azire', 51820, '10.0.0.1', 8080, 'tcp', 'legacy', 'active',
+        9999999999, 'dnat-legacy', 'fw-legacy', 1, 1);
+    `);
+    seed.close();
+
+    const db = createDb(file);
+    const m = db.getMapping('a');
+    expect(m).not.toBeNull();
+    expect(m!.routerHandle).toEqual({ dnatId: 'dnat-legacy', firewallId: 'fw-legacy' });
+    db.close();
+
+    const check = new Database(file);
+    const cols = (check.prepare('PRAGMA table_info(port_mappings)').all() as { name: string }[]).map((c) => c.name);
+    check.close();
+    expect(cols).not.toContain('unifi_dnat_id');
+    expect(cols).not.toContain('unifi_firewall_id');
+    expect(cols).toContain('router_handle');
   });
 });

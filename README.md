@@ -44,31 +44,26 @@ A Docker-based control interface for managing VPN port forwardings and automatic
 git clone https://github.com/webbson/vpn-port-manager.git
 cd vpn-port-manager
 cp .env.example .env
-# Edit .env with your credentials
+# Generate a random APP_SECRET_KEY and put it in .env:
+openssl rand -hex 32
 docker compose up -d
 ```
 
-Open `http://<container-ip>:3000` in your browser.
+Open `http://<container-ip>:3000` in your browser and complete the setup wizard — enter VPN provider and router credentials in the UI. After saving, restart the container to start the service fully.
 
 Docker Hub image: `webbson/vpn-port-manager` (private during early testing, multi-arch amd64 + arm64). Run `docker login` with a Docker Hub token once before `docker compose pull` / `up`.
 
 ## Configuration
 
-All configuration is via environment variables. See `.env.example` for the full list.
+All provider + router credentials are configured in the web UI (Settings page) and stored encrypted in the SQLite database. The only env vars the app reads are:
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `VPN_PROVIDER` | yes | — | Provider name (`azire`) |
-| `VPN_API_TOKEN` | yes | — | Bearer token for the VPN provider API |
-| `VPN_INTERNAL_IP` | yes | — | Your internal VPN IP (e.g., `10.0.16.181`) |
-| `MAX_PORTS` | no | `5` | Maximum port forwardings allowed |
-| `UNIFI_HOST` | yes | — | UDM-Pro address (e.g., `https://192.168.1.1`) |
-| `UNIFI_USERNAME` | yes | — | UniFi local account username |
-| `UNIFI_PASSWORD` | yes | — | UniFi local account password |
-| `UNIFI_VPN_INTERFACE` | yes | — | WireGuard interface name on UDM-Pro (e.g., `wg0`) |
-| `SYNC_INTERVAL_MS` | no | `300000` | Sync watchdog interval (default 5 min) |
-| `RENEW_THRESHOLD_DAYS` | no | `30` | Days before expiry to auto-renew |
-| `PORT` | no | `3000` | Web UI listen port |
+| `APP_SECRET_KEY` | **yes** | — | 16+ char key used to encrypt stored VPN/router secrets. Generate with `openssl rand -hex 32`. **Do not change after first boot** — rotating invalidates every stored secret. |
+| `PORT` | no | `3000` | Web UI + API listen port |
+| `DB_PATH` | no | `/data/vpnportmanager.db` | SQLite file path |
+
+Operational knobs (sync interval, renew threshold, max ports) are set on the Settings page — **App** section.
 
 ## Hooks
 

@@ -2,6 +2,8 @@
 
 The XML template is served publicly from this GitHub repo, so Unraid can load it via URL. The Docker Hub image (`webbson/vpn-port-manager`) is **private** while the project is in early testing, so Unraid also needs to authenticate to Docker Hub once before it can pull.
 
+Provider + router credentials are **not** set as env vars. After the container starts, the web UI shows a setup wizard where VPN and router details are entered and stored encrypted in the app's SQLite database.
+
 ## Prerequisites
 
 - The container must run on a network/IP that routes through your VPN tunnel
@@ -18,9 +20,19 @@ docker login -u <your-dockerhub-username>
 # paste a Docker Hub Personal Access Token with at least Read scope
 ```
 
-Credentials are written to `/root/.docker/config.json` and persist across reboots. Unraid's Docker tab uses them for all subsequent pulls.
+Credentials persist in `/root/.docker/config.json` across reboots.
 
-## 2. Add the container in the Unraid UI
+## 2. Generate an APP_SECRET_KEY
+
+On any machine:
+
+```bash
+openssl rand -hex 32
+```
+
+Copy the result. This key encrypts every secret stored in the app (VPN API token, router password). Keep it safe — rotating it later invalidates every saved setting.
+
+## 3. Add the container in the Unraid UI
 
 - **Docker → Add Container**
 - Paste this into the **Template** field:
@@ -29,11 +41,22 @@ Credentials are written to `/root/.docker/config.json` and persist across reboot
   https://raw.githubusercontent.com/webbson/vpn-port-manager/main/unraid/vpn-port-manager.xml
   ```
 
-- Fill in the required env vars: `VPN_API_TOKEN`, `VPN_INTERNAL_IP`, `UNIFI_HOST`, `UNIFI_USERNAME`, `UNIFI_PASSWORD`, `UNIFI_VPN_INTERFACE`
-- Set the network to `br0` (or your VPN-routed network) and assign a static IP
-- Click **Apply**
+- Fill in **App Secret Key** with the value from step 2. Leave **Web UI Port** and **AppData** at their defaults.
+- Set the network to `br0` (or your VPN-routed network) and assign a static IP.
+- Click **Apply**. Unraid will pull `webbson/vpn-port-manager:latest` using the credentials from step 1.
 
-Unraid pulls `webbson/vpn-port-manager:latest` from the private repo using the credentials from step 1.
+## 4. Complete the setup wizard
+
+Open the container's Web UI. You will land on `/setup` automatically. Enter:
+
+- **VPN provider** — Azire API token + internal VPN IP.
+- **Router** — UDM-Pro URL, admin username, admin password, and the VPN interface name (usually `wg0`).
+
+Use the **Test** button next to each section to verify connectivity before saving. After saving both sections, **restart the container** (Docker tab → click the icon → Restart) to exit setup mode and start the sync watchdog.
+
+## Changing settings later
+
+Edit on the **Settings** page and save. A yellow banner appears telling you to restart the container — save takes effect only after the next boot.
 
 ## Permissions
 
@@ -47,22 +70,25 @@ chown -R 1000:1000 /mnt/user/appdata/vpn-port-manager
 
 The container needs an IP that routes through your VPN:
 
-- **br0 with static IP** — Assign a LAN IP, then use Unraid's network routing or a VLAN to route that IP through the VPN tunnel
-- **Custom Docker network** — Create a macvlan or ipvlan network attached to your VPN interface
+- **br0 with static IP** — assign a LAN IP, then use Unraid's network routing or a VLAN to route that IP through the VPN tunnel
+- **Custom Docker network** — create a macvlan or ipvlan network attached to your VPN interface
 
 The container itself does NOT run a VPN client — it expects the network layer to handle routing.
 
 ## Updating
 
-Use Unraid's built-in **Check for Updates** — it will re-pull the `:latest` tag using the stored Docker Hub credentials. Each pushed `v*.*.*` tag moves `:latest` via the GitHub Actions workflow.
+Use Unraid's built-in **Check for Updates** — it re-pulls the `:latest` tag with the stored Docker Hub credentials. GitHub Actions rebuilds and pushes a new `:latest` on every `v*.*.*` tag.
 
 ## Data
 
-SQLite database is stored at `/mnt/user/appdata/vpn-port-manager/vpnportmanager.db`. Back this up to preserve your port mappings and hook configs.
+The SQLite database at `/mnt/user/appdata/vpn-port-manager/vpnportmanager.db` stores:
+
+- Port mappings, hooks, and sync log (plaintext — not sensitive).
+- Encrypted VPN + router settings (AES-GCM wrapped with `APP_SECRET_KEY`).
+
+Back this up if you want to preserve mappings, hook configs, and saved settings. If you lose the `APP_SECRET_KEY`, the settings rows become unrecoverable; port mappings and hooks stay readable.
 
 ## Build locally instead (optional)
-
-If you prefer building on the Unraid host instead of pulling from Docker Hub:
 
 ```bash
 cd /mnt/user/appdata
@@ -71,4 +97,4 @@ cd vpn-port-manager-src
 docker build -t webbson/vpn-port-manager:latest .
 ```
 
-Then install via the template URL above — it will reuse the local image and skip the pull.
+Then install via the template URL above — it will reuse the local image.

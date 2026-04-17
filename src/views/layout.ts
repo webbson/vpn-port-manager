@@ -366,18 +366,50 @@ export function layout(title: string, content: string): string {
     }
 
     .hook-remove-btn:hover { background: #4e1e1e; }
+
+    .banner {
+      background: #3d2f05;
+      color: #d29922;
+      border-bottom: 1px solid #d2992255;
+      padding: 10px 24px;
+      display: none;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+    }
+    .banner.show { display: flex; }
+    .banner button {
+      background: none;
+      border: 1px solid #d2992255;
+      color: #d29922;
+      border-radius: 6px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .banner button:hover { background: #d2992222; }
   </style>
 </head>
 <body>
+  <div id="restart-banner" class="banner">
+    <span><strong>Configuration saved.</strong> Restart the container to apply the new settings.</span>
+    <button onclick="localStorage.removeItem('restartRequired');this.parentElement.classList.remove('show')">Dismiss</button>
+  </div>
   <nav>
     <a class="nav-brand" href="/">VPN Port Manager</a>
     <a href="/">Dashboard</a>
     <a href="/create">New Mapping</a>
     <a href="/logs">Logs</a>
+    <a href="/settings">Settings</a>
   </nav>
   <div class="container">
     ${content}
   </div>
+  <script>
+    if (localStorage.getItem('restartRequired') === '1') {
+      document.getElementById('restart-banner').classList.add('show');
+    }
+  </script>
 </body>
 </html>`;
 }

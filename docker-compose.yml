@@ -9,16 +9,10 @@ services:
     volumes:
       - vpn-pm-data:/data
     environment:
-      - VPN_PROVIDER=azire
-      - VPN_API_TOKEN=${VPN_API_TOKEN}
-      - VPN_INTERNAL_IP=${VPN_INTERNAL_IP}
-      - MAX_PORTS=5
-      - UNIFI_HOST=${UNIFI_HOST}
-      - UNIFI_USERNAME=${UNIFI_USERNAME}
-      - UNIFI_PASSWORD=${UNIFI_PASSWORD}
-      - UNIFI_VPN_INTERFACE=${UNIFI_VPN_INTERFACE}
-      - SYNC_INTERVAL_MS=300000
-      - RENEW_THRESHOLD_DAYS=30
+      # Encryption key for stored VPN + router secrets. Generate with:
+      #   openssl rand -hex 32
+      # Do not change this after the first boot — rotating invalidates all stored settings.
+      - APP_SECRET_KEY=${APP_SECRET_KEY}
       - PORT=3000
 
 volumes:

@@ -1,39 +1,56 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+
+const ENV_KEYS = ["PORT", "APP_SECRET_KEY", "DB_PATH"];
+
+function captureEnv() {
+  const saved: Record<string, string | undefined> = {};
+  for (const k of ENV_KEYS) saved[k] = process.env[k];
+  return saved;
+}
+
+function restoreEnv(saved: Record<string, string | undefined>) {
+  for (const [k, v] of Object.entries(saved)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+}
 
 describe("config", () => {
+  let saved: Record<string, string | undefined>;
+
   beforeEach(() => {
-    process.env.VPN_PROVIDER = "azire";
-    process.env.VPN_API_TOKEN = "test-token";
-    process.env.VPN_INTERNAL_IP = "10.0.16.181";
-    process.env.UNIFI_HOST = "https://192.168.1.1";
-    process.env.UNIFI_USERNAME = "admin";
-    process.env.UNIFI_PASSWORD = "pass";
-    process.env.UNIFI_VPN_INTERFACE = "wg0";
+    saved = captureEnv();
+    for (const k of ENV_KEYS) delete process.env[k];
+    process.env.APP_SECRET_KEY = "sixteen-or-more-chars-key";
   });
 
-  it("parses all required env vars", async () => {
-    const { loadConfig } = await import("../src/config.js");
-    const config = loadConfig();
-    expect(config.vpnProvider).toBe("azire");
-    expect(config.vpnApiToken).toBe("test-token");
-    expect(config.vpnInternalIp).toBe("10.0.16.181");
-    expect(config.unifiHost).toBe("https://192.168.1.1");
-    expect(config.unifiUsername).toBe("admin");
-    expect(config.unifiPassword).toBe("pass");
-    expect(config.unifiVpnInterface).toBe("wg0");
-  });
+  afterEach(() => restoreEnv(saved));
 
-  it("uses defaults for optional vars", async () => {
+  it("parses APP_SECRET_KEY and defaults for port and db path", async () => {
     const { loadConfig } = await import("../src/config.js");
     const config = loadConfig();
-    expect(config.maxPorts).toBe(5);
-    expect(config.syncIntervalMs).toBe(300000);
-    expect(config.renewThresholdDays).toBe(30);
+    expect(config.appSecretKey).toBe("sixteen-or-more-chars-key");
     expect(config.port).toBe(3000);
+    expect(config.dbPath).toBe("/data/vpnportmanager.db");
   });
 
-  it("throws on missing required vars", async () => {
-    delete process.env.VPN_API_TOKEN;
+  it("honours PORT and DB_PATH overrides", async () => {
+    process.env.PORT = "4567";
+    process.env.DB_PATH = "/tmp/custom.db";
+    const { loadConfig } = await import("../src/config.js");
+    const config = loadConfig();
+    expect(config.port).toBe(4567);
+    expect(config.dbPath).toBe("/tmp/custom.db");
+  });
+
+  it("throws when APP_SECRET_KEY is missing", async () => {
+    delete process.env.APP_SECRET_KEY;
+    const { loadConfig } = await import("../src/config.js");
+    expect(() => loadConfig()).toThrow();
+  });
+
+  it("rejects short APP_SECRET_KEY values", async () => {
+    process.env.APP_SECRET_KEY = "too-short";
     const { loadConfig } = await import("../src/config.js");
     expect(() => loadConfig()).toThrow();
   });

@@ -1,6 +1,6 @@
-import type { Db } from "./db.js";
+import type { Db, RouterHandle } from "./db.js";
 import type { VpnProvider } from "./providers/types.js";
-import type { UnifiClient } from "./unifi/types.js";
+import type { PortForwardSpec, Protocol, RouterClient } from "./routers/types.js";
 import { createHookRunner } from "./hooks/runner.js";
 import type { HookPayload } from "./hooks/types.js";
 import type { PortMapping } from "./db.js";
@@ -8,7 +8,7 @@ import type { PortMapping } from "./db.js";
 export interface SyncConfig {
   db: Db;
   provider: VpnProvider;
-  unifi: UnifiClient;
+  router: RouterClient;
   renewThresholdDays: number;
 }
 
@@ -18,8 +18,23 @@ export interface SyncWatchdog {
   stop(): void;
 }
 
+function toRouterProtocol(p: string): Protocol {
+  if (p === "tcp" || p === "udp") return p;
+  return "tcp_udp";
+}
+
+function specFromMapping(m: PortMapping): PortForwardSpec {
+  return {
+    vpnPort: m.vpnPort,
+    destIp: m.destIp,
+    destPort: m.destPort,
+    protocol: toRouterProtocol(m.protocol),
+    label: m.label,
+  };
+}
+
 export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
-  const { db, provider, unifi, renewThresholdDays } = config;
+  const { db, provider, router, renewThresholdDays } = config;
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -58,30 +73,19 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
     for (const mapping of mappings) {
       if (portSet.has(mapping.vpnPort)) continue;
 
-      // Port is missing from provider. Two cases:
-      // 1. Truly expired (expiresAt in the past) → mark expired, clean up
-      // 2. Lost (provider restart, etc.) → re-create on provider, update downstream
-
       if (mapping.expiresAt <= nowSeconds) {
-        // Case 1: Truly expired — mark expired and clean up UniFi rules
         db.updateMapping(mapping.id, { status: "expired" });
 
-        if (mapping.unifiDnatId) {
-          try { await unifi.deleteDnatRule(mapping.unifiDnatId); } catch {}
-        }
-        if (mapping.unifiFirewallId) {
-          try { await unifi.deleteFirewallRule(mapping.unifiFirewallId); } catch {}
-        }
+        try { await router.deletePortForward(mapping.routerHandle as RouterHandle); } catch {}
 
-        const payload: HookPayload = {
+        await fireHooks(mapping, {
           mappingId: mapping.id,
           label: mapping.label,
           oldPort: mapping.vpnPort,
           newPort: null,
           destIp: mapping.destIp,
           destPort: mapping.destPort,
-        };
-        await fireHooks(mapping, payload);
+        });
 
         db.logSync("expired", mapping.id, {
           reason: "port_expired",
@@ -90,7 +94,6 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         continue;
       }
 
-      // Case 2: Port lost but not expired — re-create on provider
       const oldPort = mapping.vpnPort;
       try {
         const newProviderPort = await provider.createPort();
@@ -103,27 +106,25 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           status: "active",
         });
 
-        // Update existing UniFi rules in place with new port number
-        if (mapping.unifiDnatId) {
-          try {
-            await unifi.updateDnatRule(mapping.unifiDnatId, { dst_port: String(newPort) });
-          } catch {}
-        }
-        if (mapping.unifiFirewallId) {
-          try {
-            await unifi.updateFirewallRule(mapping.unifiFirewallId, { dst_port: String(newPort) });
-          } catch {}
+        const updated = db.getMapping(mapping.id)!;
+        try {
+          const handle = await router.updatePortForward(
+            updated.routerHandle as RouterHandle,
+            specFromMapping(updated)
+          );
+          db.updateMapping(mapping.id, { routerHandle: handle });
+        } catch {
+          // router update best-effort; next tick runs repair
         }
 
-        const payload: HookPayload = {
+        await fireHooks(mapping, {
           mappingId: mapping.id,
           label: mapping.label,
           oldPort,
           newPort,
           destIp: mapping.destIp,
           destPort: mapping.destPort,
-        };
-        await fireHooks(mapping, payload);
+        });
 
         db.logSync("recreate", mapping.id, {
           reason: "port_missing_from_provider",
@@ -132,7 +133,6 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           newExpiresAt,
         });
       } catch (err: unknown) {
-        // Re-creation failed — mark as error, next sync cycle will retry
         const message = err instanceof Error ? err.message : String(err);
         db.updateMapping(mapping.id, { status: "error" });
         db.logSync("error", mapping.id, {
@@ -154,14 +154,8 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
       if (mapping.expiresAt - nowSeconds <= thresholdSeconds) {
         const oldPort = mapping.vpnPort;
 
-        // Delete old port from provider
-        try {
-          await provider.deletePort(oldPort);
-        } catch {
-          // ignore — may already be gone
-        }
+        try { await provider.deletePort(oldPort); } catch {}
 
-        // Create new port
         const newProviderPort = await provider.createPort();
         const newPort = newProviderPort.port;
         const newExpiresAt = newProviderPort.expiresAt;
@@ -171,38 +165,27 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           expiresAt: newExpiresAt,
         });
 
-        // Update UniFi rules if port number changed
         if (newPort !== oldPort) {
-          if (mapping.unifiDnatId) {
-            try {
-              await unifi.updateDnatRule(mapping.unifiDnatId, {
-                dst_port: String(newPort),
-              });
-            } catch {
-              // best effort
-            }
-          }
-
-          if (mapping.unifiFirewallId) {
-            try {
-              await unifi.updateFirewallRule(mapping.unifiFirewallId, {
-                dst_port: String(newPort),
-              });
-            } catch {
-              // best effort
-            }
+          const updated = db.getMapping(mapping.id)!;
+          try {
+            const handle = await router.updatePortForward(
+              updated.routerHandle as RouterHandle,
+              specFromMapping(updated)
+            );
+            db.updateMapping(mapping.id, { routerHandle: handle });
+          } catch {
+            // best-effort
           }
         }
 
-        const payload: HookPayload = {
+        await fireHooks(mapping, {
           mappingId: mapping.id,
           label: mapping.label,
           oldPort,
           newPort,
           destIp: mapping.destIp,
           destPort: mapping.destPort,
-        };
-        await fireHooks(mapping, payload);
+        });
 
         db.logSync("renew", mapping.id, {
           oldPort,
@@ -213,64 +196,26 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
     }
   }
 
-  async function checkUnifiRules(): Promise<void> {
+  async function checkRouterRules(): Promise<void> {
     const mappings = db.listMappings().filter((m) => m.status === "active");
-
     for (const mapping of mappings) {
-      // Check DNAT rule
-      if (mapping.unifiDnatId) {
-        const dnatRule = await unifi.getDnatRule(mapping.unifiDnatId);
-        if (dnatRule === null) {
-          // Re-create DNAT rule
-          const newDnatId = await unifi.createDnatRule({
-            name: `vpn-portfwd-${mapping.label}`,
-            enabled: true,
-            pfwd_interface: "wan",
-            src: "any",
-            dst_port: String(mapping.vpnPort),
-            fwd: mapping.destIp,
-            fwd_port: String(mapping.destPort),
-            proto: mapping.protocol === "both" ? "tcp_udp" : mapping.protocol,
-            log: false,
-          });
-
-          db.updateMapping(mapping.id, { unifiDnatId: newDnatId });
+      try {
+        const handleBefore = mapping.routerHandle as RouterHandle;
+        const handleAfter = await router.repairPortForward(handleBefore, specFromMapping(mapping));
+        if (JSON.stringify(handleBefore) !== JSON.stringify(handleAfter)) {
+          db.updateMapping(mapping.id, { routerHandle: handleAfter });
           db.logSync("sync_fix", mapping.id, {
-            reason: "dnat_rule_missing",
-            oldId: mapping.unifiDnatId,
-            newId: newDnatId,
+            reason: "router_rule_repaired",
+            before: handleBefore,
+            after: handleAfter,
           });
         }
-      }
-
-      // Re-fetch mapping in case DNAT update changed it
-      const refreshed = db.getMapping(mapping.id);
-      const fwId = refreshed?.unifiFirewallId ?? mapping.unifiFirewallId;
-
-      if (fwId) {
-        const fwRule = await unifi.getFirewallRule(fwId);
-        if (fwRule === null) {
-          // Re-create firewall rule
-          const newFwId = await unifi.createFirewallRule({
-            name: `vpn-allow-${mapping.label}`,
-            enabled: true,
-            ruleset: "WAN_IN",
-            rule_index: 2000,
-            action: "accept",
-            protocol: mapping.protocol === "both" ? "tcp_udp" : mapping.protocol,
-            src_firewallgroup_ids: [],
-            dst_address: mapping.destIp,
-            dst_port: String(mapping.vpnPort),
-            logging: false,
-          });
-
-          db.updateMapping(mapping.id, { unifiFirewallId: newFwId });
-          db.logSync("sync_fix", mapping.id, {
-            reason: "firewall_rule_missing",
-            oldId: fwId,
-            newId: newFwId,
-          });
-        }
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        db.logSync("error", mapping.id, {
+          step: "router_repair",
+          error: message,
+        });
       }
     }
   }
@@ -320,26 +265,18 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
 
   return {
     async runOnce(): Promise<void> {
-      // Step 1: Login to UniFi
       try {
-        await unifi.login();
+        await router.login();
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        console.error(`[sync] UniFi login failed: ${message}`);
+        console.error(`[sync] Router login failed: ${message}`);
         db.logSync("error", null, { step: "login", error: message });
         return;
       }
 
-      // Step 2: Check provider sync (detect ports missing from provider)
       await checkProviderSync();
-
-      // Step 3: Renew ports expiring soon
       await checkRenewals();
-
-      // Step 4: Re-create missing UniFi rules
-      await checkUnifiRules();
-
-      // Step 5: Retry failed hooks
+      await checkRouterRules();
       await retryFailedHooks();
     },
 
