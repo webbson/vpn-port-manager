@@ -1,5 +1,5 @@
 {
-  "name": "unifi-wireguard-vpn-portmanager",
+  "name": "vpn-port-manager",
   "version": "1.0.0",
   "description": "",
   "type": "module",

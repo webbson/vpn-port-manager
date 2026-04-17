@@ -1,6 +1,7 @@
 services:
   vpn-port-manager:
-    build: .
+    image: webbson/vpn-port-manager:latest
+    # build: .  # uncomment to build locally instead of pulling
     container_name: vpn-port-manager
     restart: unless-stopped
     ports:

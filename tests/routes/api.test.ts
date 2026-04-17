@@ -53,6 +53,13 @@ describe("API routes", () => {
     app.route("/api", createApiRoutes({ db, provider, unifi, vpnInterface: "wg0" }));
   });
 
+  it("GET /api/health returns ok", async () => {
+    const res = await app.request("/api/health");
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean };
+    expect(body.ok).toBe(true);
+  });
+
   it("GET /api/mappings returns empty list", async () => {
     const res = await app.request("/api/mappings");
     expect(res.status).toBe(200);

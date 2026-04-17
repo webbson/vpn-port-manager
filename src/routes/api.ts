@@ -50,6 +50,8 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   const hookRunner = createHookRunner();
   const app = new Hono();
 
+  app.get("/health", (c) => c.json({ ok: true }));
+
   async function fireHooks(mappingId: string, payload: HookPayload): Promise<void> {
     const hooks = db.listHooks(mappingId);
     for (const hook of hooks) {

@@ -41,14 +41,16 @@ A Docker-based control interface for managing VPN port forwardings and automatic
 ## Quick Start
 
 ```bash
-git clone https://github.com/webbson/unifi-wireguard-vpn-portmanager.git
-cd unifi-wireguard-vpn-portmanager
+git clone https://github.com/webbson/vpn-port-manager.git
+cd vpn-port-manager
 cp .env.example .env
 # Edit .env with your credentials
 docker compose up -d
 ```
 
 Open `http://<container-ip>:3000` in your browser.
+
+Docker Hub image: `webbson/vpn-port-manager` (private during early testing, multi-arch amd64 + arm64). Run `docker login` with a Docker Hub token once before `docker compose pull` / `up`.
 
 ## Configuration
 

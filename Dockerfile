@@ -20,12 +20,28 @@ RUN pnpm install --frozen-lockfile --prod
 
 COPY --from=builder /app/dist ./dist
 
-RUN mkdir -p /data
+RUN mkdir -p /data && chown -R node:node /app /data
 
 ENV NODE_ENV=production
 ENV NODE_TLS_REJECT_UNAUTHORIZED=0
+ENV PORT=3000
 
 EXPOSE 3000
 VOLUME ["/data"]
+
+ARG BUILD_VERSION=dev
+ARG BUILD_REVISION=unknown
+LABEL org.opencontainers.image.title="vpn-port-manager" \
+      org.opencontainers.image.description="VPN port manager for UniFi UDM-Pro (Azire VPN)" \
+      org.opencontainers.image.source="https://github.com/webbson/vpn-port-manager" \
+      org.opencontainers.image.url="https://github.com/webbson/vpn-port-manager" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${BUILD_VERSION}" \
+      org.opencontainers.image.revision="${BUILD_REVISION}"
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>{process.exit(r.ok?0:1)}).catch(()=>process.exit(1))"
+
+USER node
 
 CMD ["node", "dist/index.js"]
