@@ -240,6 +240,14 @@ export function layout(title: string, content: string): string {
       margin-bottom: 18px;
     }
 
+    .form-help {
+      font-size: 12px;
+      color: #8b949e;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .form-help:empty { display: none; }
+
     label {
       display: block;
       font-size: 13px;

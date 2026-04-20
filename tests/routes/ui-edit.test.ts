@@ -87,13 +87,16 @@ describe("UI /edit/:id hook editing", () => {
     db.createHook({ mappingId, type: "plugin", config: JSON.stringify({ plugin: "plex", host: "http://plex.lan:32400", token: "old" }) });
   });
 
-  it("GET renders existing hooks pre-populated in the builder seeds", async () => {
+  it("GET renders existing plex hooks with display-level type=plex (not nested 'plugin')", async () => {
     const res = await app.request(`/edit/${mappingId}`);
     expect(res.status).toBe(200);
     const html = await res.text();
-    expect(html).toContain('"type":"plugin"');
-    expect(html).toContain('"plugin":"plex"');
+    // Stored row is { type: "plugin", config.plugin: "plex" } — surfaced
+    // in the builder seeds as { type: "plex", config: {host,token} }.
+    expect(html).toContain('"type":"plex"');
     expect(html).toContain('"host":"http://plex.lan:32400"');
+    expect(html).toContain('"token":"old"');
+    expect(html).not.toMatch(/"config":\{[^}]*"plugin":"plex"/);
   });
 
   it("POST replaces the hook set with whatever was submitted", async () => {
@@ -136,6 +139,33 @@ describe("UI /edit/:id hook editing", () => {
     });
     expect(res.status).toBe(302);
     expect(db.listHooks(mappingId)).toEqual([]);
+  });
+
+  it("POST with display-level type=plex is stored as {type:'plugin', config.plugin:'plex'}", async () => {
+    const body = urlEncode({
+      label: "ssh",
+      destIp: "10.0.0.10",
+      destPort: "22",
+      protocol: "tcp",
+      "hooks[0][type]": "plex",
+      "hooks[0][host]": "http://plex.lan:32400",
+      "hooks[0][token]": "new-token",
+    });
+    const res = await app.request(`/edit/${mappingId}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    expect(res.status).toBe(302);
+
+    const hooks = db.listHooks(mappingId);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].type).toBe("plugin");
+    expect(JSON.parse(hooks[0].config)).toEqual({
+      plugin: "plex",
+      host: "http://plex.lan:32400",
+      token: "new-token",
+    });
   });
 
   it("POST with multiple hooks persists all of them", async () => {

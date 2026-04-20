@@ -72,13 +72,21 @@ Executed via `child_process.execSync` with a 30-second timeout. The command stri
 
 ## `plugin` — built-in integrations
 
-Plugin hooks route to a named implementation under `src/hooks/plugins/`. The shipped example is `plex`:
+Plugin hooks route to a named implementation under `src/hooks/plugins/`. In the UI each registered plugin appears as its own hook type (alongside **Webhook** and **Command**), so picking **Plex** is a single click — the nested `plugin` indirection happens automatically at save time.
+
+### Plex
+
+Config stored in the DB:
 
 ```json
 { "plugin": "plex", "host": "http://plex.lan:32400", "token": "<X-Plex-Token>" }
 ```
 
-It PUTs `/:/prefs?ManualPortMappingPort=<newPort>&X-Plex-Token=<token>` to the Plex server whenever `newPort` is non-null (no call on delete).
+On every port change the runner PUTs `{host}/:/prefs?ManualPortMappingPort={newPort}&X-Plex-Token={token}` (no call when `newPort` is `null`, i.e. on delete).
+
+**Where to find your X-Plex-Token**: in the Plex web UI, play any item → **…** (More) → **Get Info** → **View XML**. A new tab opens with a URL containing `X-Plex-Token=…` — copy that value. Official guide: <https://support.plex.tv/articles/204059436>.
+
+**Container networking**: the `host` URL is fetched from *inside* this container. If Plex runs on the Docker host itself, `http://localhost:32400` won't work — use the LAN IP, the Docker bridge gateway, or put both containers on the same user-defined network. Test quickly with `docker compose exec vpn-port-manager wget -qO- <host>/identity`.
 
 ### Adding a plugin
 
@@ -121,7 +129,7 @@ It PUTs `/:/prefs?ManualPortMappingPort=<newPort>&X-Plex-Token=<token>` to the P
 
 3. **Tests** — add `tests/hooks/plugins/<name>.test.ts`. Mock `fetch` with `vi.stubGlobal` and cover happy path, non-2xx response, connection error, and the `newPort === null` skip.
 
-4. **UI (optional)** — the create/edit form already exposes a dropdown of plugin names (`src/views/create.ts`). Add your new one there if it needs first-class visibility. For anything more complex than `host` + `token`, you'll need to extend `pluginFields` in `create.ts` / `edit.ts` to render the extra inputs.
+4. **UI** — add a descriptor to `src/hooks/plugins/registry.ts` (`hookPluginDescriptors`) declaring the `id` (same as the runner key), `label`, a one-line `description`, and a `fields` array with `name` / `label` / `placeholder` / `help` / `required` / `type` for each input. The hook-builder picks it up automatically — it becomes a first-class option in the Type dropdown and renders the listed fields with inline help text. No changes to `create.ts` or `edit.ts` are needed.
 
 ## Error handling and retries
 

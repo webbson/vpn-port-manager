@@ -22,15 +22,32 @@ describe("hookBuilder", () => {
     expect(html).toContain("var seeds = [];");
   });
 
-  it("emits seeds for pre-populated hooks", () => {
+  it("emits seeds for pre-populated hooks, translating plugin rows to a display-level plex type", () => {
     const html = hookBuilder([
       mkHook("plugin", { plugin: "plex", host: "http://plex.lan:32400", token: "abc" }),
       mkHook("webhook", { url: "https://example.com/hook", method: "POST" }),
     ]);
-    expect(html).toContain('"type":"plugin"');
-    expect(html).toContain('"plugin":"plex"');
+    // The stored row is { type: "plugin", config.plugin: "plex" } but the builder
+    // surfaces "plex" as a first-class type so it can be selected directly.
+    expect(html).toContain('"type":"plex"');
+    expect(html).toContain('"host":"http://plex.lan:32400"');
+    expect(html).toContain('"token":"abc"');
+    // The synthetic "plugin" key is stripped from the displayed config so the
+    // form doesn't re-emit it as an input (it gets re-added at submit time).
+    expect(html).not.toMatch(/"config":\{[^}]*"plugin":"plex"/);
+    expect(html).toContain('"type":"webhook"');
     expect(html).toContain('"url":"https://example.com/hook"');
-    expect(html).toContain('"method":"POST"');
+  });
+
+  it("renders Plex + Webhook + Command as peer type options with help text", () => {
+    const html = hookBuilder();
+    // Server-rendered TYPE_OPTIONS literal exposes every selectable type.
+    expect(html).toContain('"id":"plex"');
+    expect(html).toContain('"label":"Plex"');
+    expect(html).toContain('"id":"webhook"');
+    expect(html).toContain('"id":"command"');
+    // Help text from the plex descriptor is embedded for the JS to render.
+    expect(html).toContain("X-Plex-Token");
   });
 
   it("escapes < in seed JSON so </script> can't terminate the inline script", () => {
@@ -88,5 +105,34 @@ describe("parseHookForm", () => {
       plugin: "plex",
       host: "http://plex.lan:32400",
     });
+  });
+
+  it("translates a display-level 'plex' submission into storage shape { type:'plugin', config.plugin:'plex' }", () => {
+    const body = {
+      "hooks[0][type]": "plex",
+      "hooks[0][host]": "http://plex.lan:32400",
+      "hooks[0][token]": "tok",
+    };
+    const parsed = parseHookForm(body);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].type).toBe("plugin");
+    expect(JSON.parse(parsed[0].config)).toEqual({
+      plugin: "plex",
+      host: "http://plex.lan:32400",
+      token: "tok",
+    });
+  });
+
+  it("leaves webhook and command types unchanged by the plugin translation", () => {
+    const body = {
+      "hooks[0][type]": "webhook",
+      "hooks[0][url]": "https://example.com/hook",
+      "hooks[0][method]": "POST",
+      "hooks[1][type]": "command",
+      "hooks[1][command]": "/bin/echo {{label}}",
+    };
+    const parsed = parseHookForm(body);
+    expect(parsed[0].type).toBe("webhook");
+    expect(parsed[1].type).toBe("command");
   });
 });
