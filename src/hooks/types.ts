@@ -5,6 +5,9 @@ export interface HookPayload {
   newPort: number | null;
   destIp: string;
   destPort: number;
+  // Public IP of this host as seen from the internet. null when the lookup
+  // is uncached and the external service is unreachable.
+  externalIp: string | null;
 }
 
 export interface HookResult {

@@ -45,7 +45,7 @@ SQLite via better-sqlite3. Four tables: `port_mappings`, `hooks`, `sync_log`, `s
 ### Hook Layer (`src/hooks/`)
 Two hook types, all receiving `HookPayload` with old/new port info:
 - **Plugin:** Built-in integrations (Plex in `plugins/plex.ts`). Register new plugins in the `plugins` map in `runner.ts`.
-- **Webhook:** HTTP request (POST/GET/PUT) to a URL with the payload as JSON and optional custom headers.
+- **Webhook:** HTTP request to a URL. POST/PUT send the payload as a JSON body; GET appends it as query parameters. Custom headers optional.
 
 ### Sync Watchdog (`src/sync.ts`)
 Periodic background job: provider sync check → renewal check → router rule repair → failed hook retry. Interval is `AppSettings.syncIntervalMinutes` (stored in the `settings` table, default 15 min). Rule repair calls `router.repairPortForward(handle, spec)` which re-creates any missing underlying rules and returns a possibly-updated handle.

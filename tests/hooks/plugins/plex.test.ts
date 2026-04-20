@@ -9,6 +9,7 @@ const payload: HookPayload = {
   newPort: 59000,
   destIp: "10.0.17.249",
   destPort: 32400,
+  externalIp: "203.0.113.42",
 };
 
 const config = {

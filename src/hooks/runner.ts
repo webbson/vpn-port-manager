@@ -33,15 +33,29 @@ export function createHookRunner(): HookRunner {
       }
 
       case "webhook": {
-        const method: string = config.method ?? "POST";
+        const method: string = (config.method ?? "POST").toString().toUpperCase();
         const headers: Record<string, string> = config.headers ?? {};
+        const urlInput = config.url as string;
 
         try {
-          const response = await fetch(config.url as string, {
-            method,
-            headers: { "Content-Type": "application/json", ...headers },
-            body: JSON.stringify(payload),
-          });
+          let target = urlInput;
+          const init: RequestInit = { method, headers: { ...headers } };
+
+          if (method === "GET") {
+            // GET has no body; serialise the payload onto the URL instead so
+            // receivers like n8n / Shortcuts can read it from ?query params.
+            const url = new URL(urlInput);
+            for (const [key, value] of Object.entries(payload)) {
+              if (value === null || value === undefined) continue;
+              url.searchParams.set(key, String(value));
+            }
+            target = url.toString();
+          } else {
+            init.headers = { "Content-Type": "application/json", ...headers };
+            init.body = JSON.stringify(payload);
+          }
+
+          const response = await fetch(target, init);
 
           if (!response.ok) {
             return {

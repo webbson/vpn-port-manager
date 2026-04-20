@@ -1,6 +1,16 @@
 import type { Db } from "../db.js";
 import type { HookRunner } from "./runner.js";
 import type { HookPayload } from "./types.js";
+import { getExternalIp } from "../services/external-ip.js";
+
+export type HookPayloadBase = Omit<HookPayload, "externalIp">;
+
+// Fetches the cached external IP (5-minute TTL) and merges it into the base
+// payload. Exposed so sync.ts retry path can reuse the same lookup.
+export async function buildHookPayload(base: HookPayloadBase): Promise<HookPayload> {
+  const { ip } = await getExternalIp();
+  return { ...base, externalIp: ip };
+}
 
 // Fires every hook attached to `mappingId` with the given payload, persists
 // each hook's last-run status + error, and emits a hook_fire sync_log entry
@@ -20,16 +30,18 @@ export async function fireHooksForMapping(
   db: Db,
   runner: HookRunner,
   mappingId: string,
-  payload: HookPayload,
+  payload: HookPayloadBase,
   opts: FireHooksOptions = {}
 ): Promise<void> {
   const all = db.listHooks(mappingId);
   const hooks = opts.hookIds ? all.filter((h) => opts.hookIds!.has(h.id)) : all;
+  if (hooks.length === 0) return;
+  const fullPayload = await buildHookPayload(payload);
   for (const hook of hooks) {
     try {
       const result = await runner.execute(
         { type: hook.type, config: hook.config },
-        payload
+        fullPayload
       );
       db.updateHookStatus(hook.id, result.success ? "ok" : "error", result.error);
       db.logSync("hook_fire", mappingId, {

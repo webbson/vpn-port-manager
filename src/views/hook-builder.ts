@@ -59,7 +59,7 @@ export function hookBuilder(existing: Hook[] = []): string {
     {
       id: 'webhook',
       label: 'Webhook',
-      description: 'POST the hook payload as JSON to any URL (2xx = success).',
+      description: 'Send the hook payload to any URL. POST/PUT use a JSON body; GET sends the fields as query parameters. 2xx = success.',
     },
   ];
   const typeOptionsLiteral = JSON.stringify(typeOptions).replace(/</g, '\\u003c');
@@ -151,7 +151,7 @@ export function hookBuilder(existing: Hook[] = []): string {
           return '<div class="form-group">' +
               '<label>Webhook URL</label>' +
               '<input type="text" class="webhook-url" name="hooks[' + n + '][url]" required value="' + esc(cfg.url) + '" placeholder="https://..." />' +
-              '<div class="form-help">The full hook payload is sent as JSON. Any 2xx response is treated as success.</div>' +
+              '<div class="form-help">POST/PUT send the payload as a JSON body. GET appends the payload fields as query parameters. Any 2xx response counts as success.</div>' +
             '</div>' +
             '<div class="form-group">' +
               '<label>Method</label>' +
@@ -161,7 +161,7 @@ export function hookBuilder(existing: Hook[] = []): string {
               '<label>Custom headers</label>' +
               '<div class="webhook-headers" data-next-idx="' + headerPairs.length + '">' + headerRowsHtml + '</div>' +
               '<button type="button" class="btn secondary webhook-header-add" style="margin-top:4px;">+ Add header</button>' +
-              '<div class="form-help">Content-Type: application/json is always sent. Custom headers override it if you set one with the same name.</div>' +
+              '<div class="form-help">For POST/PUT, Content-Type: application/json is added automatically. Custom headers override it if you set one with the same name.</div>' +
             '</div>' +
             '<div class="form-group">' +
               '<label>Example request</label>' +
@@ -176,7 +176,8 @@ export function hookBuilder(existing: Hook[] = []): string {
           oldPort: 58216,
           newPort: 59000,
           destIp: '10.0.17.249',
-          destPort: 32400
+          destPort: 32400,
+          externalIp: '203.0.113.42'
         };
 
         function collectWebhookHeaders(wrapper) {
@@ -197,26 +198,48 @@ export function hookBuilder(existing: Hook[] = []): string {
           var urlEl = wrapper.querySelector('.webhook-url');
           var methodEl = wrapper.querySelector('.webhook-method');
           var url = urlEl && urlEl.value ? urlEl.value : 'https://example.com/hook';
-          var method = methodEl && methodEl.value ? methodEl.value : 'POST';
-          var headers = [['Content-Type', 'application/json']];
-          collectWebhookHeaders(wrapper).forEach(function (p) { headers.push(p); });
+          var method = (methodEl && methodEl.value ? methodEl.value : 'POST').toUpperCase();
+          var isGet = method === 'GET';
 
           var path = '/';
           var host = '';
+          var parsedOk = false;
+          var parsedUrl = null;
           try {
-            var u = new URL(url);
-            path = u.pathname + u.search;
-            host = u.host;
-          } catch (e) {
+            parsedUrl = new URL(url);
+            parsedOk = true;
+            host = parsedUrl.host;
+          } catch (e) { /* ignore — show raw url below */ }
+
+          if (isGet) {
+            if (parsedOk) {
+              Object.keys(SAMPLE_PAYLOAD).forEach(function (k) {
+                var v = SAMPLE_PAYLOAD[k];
+                if (v === null || v === undefined) return;
+                parsedUrl.searchParams.set(k, String(v));
+              });
+              path = parsedUrl.pathname + parsedUrl.search;
+            } else {
+              path = url;
+            }
+          } else if (parsedOk) {
+            path = parsedUrl.pathname + parsedUrl.search;
+          } else {
             path = url;
           }
+
+          var headers = [];
+          if (!isGet) headers.push(['Content-Type', 'application/json']);
+          collectWebhookHeaders(wrapper).forEach(function (p) { headers.push(p); });
 
           var lines = [];
           lines.push(method + ' ' + path + ' HTTP/1.1');
           if (host) lines.push('Host: ' + host);
           headers.forEach(function (h) { lines.push(h[0] + ': ' + h[1]); });
-          lines.push('');
-          lines.push(JSON.stringify(SAMPLE_PAYLOAD, null, 2));
+          if (!isGet) {
+            lines.push('');
+            lines.push(JSON.stringify(SAMPLE_PAYLOAD, null, 2));
+          }
           pre.textContent = lines.join('\\n');
         }
 

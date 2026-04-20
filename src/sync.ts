@@ -2,7 +2,7 @@ import type { Db, RouterHandle } from "./db.js";
 import type { VpnProvider } from "./providers/types.js";
 import type { PortForwardSpec, Protocol, RouterClient } from "./routers/types.js";
 import { createHookRunner } from "./hooks/runner.js";
-import { fireHooksForMapping } from "./hooks/fire.js";
+import { fireHooksForMapping, buildHookPayload, type HookPayloadBase } from "./hooks/fire.js";
 import type { HookPayload } from "./hooks/types.js";
 import type { PortMapping } from "./db.js";
 
@@ -39,7 +39,7 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
-  async function fireHooks(mapping: PortMapping, payload: HookPayload): Promise<void> {
+  async function fireHooks(mapping: PortMapping, payload: HookPayloadBase): Promise<void> {
     await fireHooksForMapping(db, hookRunner, mapping.id, payload);
   }
 
@@ -209,14 +209,14 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
 
       if (failedHooks.length === 0) continue;
 
-      const payload: HookPayload = {
+      const payload: HookPayload = await buildHookPayload({
         mappingId: mapping.id,
         label: mapping.label,
         oldPort: null,
         newPort: mapping.vpnPort,
         destIp: mapping.destIp,
         destPort: mapping.destPort,
-      };
+      });
 
       for (const hook of failedHooks) {
         try {

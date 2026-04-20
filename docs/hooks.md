@@ -9,18 +9,19 @@ Two types, all defined in `src/hooks/runner.ts`:
 | Type | Use when |
 |---|---|
 | `plugin` | You have a first-class integration with a specific service (e.g. Plex). Logic lives in `src/hooks/plugins/<name>.ts`. |
-| `webhook` | You want to send the payload as JSON to an arbitrary HTTP endpoint (POST/GET/PUT with optional custom headers). |
+| `webhook` | You want to send the payload to an arbitrary HTTP endpoint (POST/PUT as a JSON body, GET as query parameters, with optional custom headers). |
 
 All three receive the same `HookPayload`:
 
 ```ts
 interface HookPayload {
-  mappingId: string;     // stable UUID for the mapping
-  label: string;         // user-chosen label
-  oldPort: number | null; // previous VPN port (null on create)
-  newPort: number | null; // new VPN port     (null on delete)
-  destIp: string;        // LAN destination IP
-  destPort: number;      // LAN destination port
+  mappingId: string;        // stable UUID for the mapping
+  label: string;            // user-chosen label
+  oldPort: number | null;   // previous VPN port (null on create)
+  newPort: number | null;   // new VPN port     (null on delete)
+  destIp: string;           // LAN destination IP
+  destPort: number;         // LAN destination port
+  externalIp: string | null; // public IP this host sees itself on (null if lookup failed)
 }
 ```
 
@@ -48,7 +49,12 @@ Config shape (JSON-stringified and stored in the `hooks` table):
 }
 ```
 
-`method` defaults to `POST` (GET/PUT are also selectable in the UI); `headers` is optional (merged on top of `Content-Type: application/json`). The body is the raw `HookPayload` object serialized as JSON. Non-2xx responses mark the hook `error` with the status line. The hook-builder renders a live "Example request" preview so you can see exactly what goes over the wire.
+`method` defaults to `POST` (GET/PUT are also selectable in the UI); `headers` is optional.
+
+- **POST / PUT** — `Content-Type: application/json` is added automatically (custom headers can override it). The body is the `HookPayload` object serialised as JSON.
+- **GET** — no body. Every non-null `HookPayload` field is appended to the URL as a query parameter (`?mappingId=…&label=…&newPort=…&destIp=…&destPort=…&externalIp=…`). Null fields (e.g. `newPort` on delete, `externalIp` when the lookup failed) are omitted. Any existing query string on the URL is preserved.
+
+Non-2xx responses mark the hook `error` with the status line. The hook-builder renders a live "Example request" preview so you can see exactly what goes over the wire.
 
 ## `plugin` — built-in integrations
 
