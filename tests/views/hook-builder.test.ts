@@ -24,13 +24,12 @@ describe("hookBuilder", () => {
 
   it("emits seeds for pre-populated hooks, translating plugin rows to a display-level plex type", () => {
     const html = hookBuilder([
-      mkHook("plugin", { plugin: "plex", host: "http://plex.lan:32400", token: "abc" }),
+      mkHook("plugin", { plugin: "plex", token: "abc" }),
       mkHook("webhook", { url: "https://example.com/hook", method: "POST" }),
     ]);
     // The stored row is { type: "plugin", config.plugin: "plex" } but the builder
     // surfaces "plex" as a first-class type so it can be selected directly.
     expect(html).toContain('"type":"plex"');
-    expect(html).toContain('"host":"http://plex.lan:32400"');
     expect(html).toContain('"token":"abc"');
     // The synthetic "plugin" key is stripped from the displayed config so the
     // form doesn't re-emit it as an input (it gets re-added at submit time).
@@ -39,19 +38,30 @@ describe("hookBuilder", () => {
     expect(html).toContain('"url":"https://example.com/hook"');
   });
 
-  it("renders Plex + Webhook + Command as peer type options with help text", () => {
+  it("renders Plex + Webhook as peer type options with help text", () => {
     const html = hookBuilder();
     // Server-rendered TYPE_OPTIONS literal exposes every selectable type.
     expect(html).toContain('"id":"plex"');
     expect(html).toContain('"label":"Plex"');
     expect(html).toContain('"id":"webhook"');
-    expect(html).toContain('"id":"command"');
+    expect(html).not.toContain('"id":"command"');
     // Help text from the plex descriptor is embedded for the JS to render.
     expect(html).toContain("X-Plex-Token");
   });
 
+  it("preserves webhook headers as a nested object in the seed", () => {
+    const html = hookBuilder([
+      mkHook("webhook", {
+        url: "https://example.com/hook",
+        method: "POST",
+        headers: { Authorization: "Bearer abc", "X-Trace": "1" },
+      }),
+    ]);
+    expect(html).toContain('"headers":{"Authorization":"Bearer abc","X-Trace":"1"}');
+  });
+
   it("escapes < in seed JSON so </script> can't terminate the inline script", () => {
-    const html = hookBuilder([mkHook("command", { command: "</script><script>alert(1)</script>" })]);
+    const html = hookBuilder([mkHook("webhook", { url: "</script><script>alert(1)</script>" })]);
     // The raw </script that would end the inline <script> block must not appear.
     expect(html).not.toMatch(/<\/script>\s*<script>alert/);
     expect(html).toContain("\\u003c/script>");
@@ -63,7 +73,6 @@ describe("parseHookForm", () => {
     const body = {
       "hooks[0][type]": "plugin",
       "hooks[0][plugin]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "tok",
       "hooks[1][type]": "webhook",
       "hooks[1][url]": "https://example.com/hook",
@@ -75,7 +84,6 @@ describe("parseHookForm", () => {
     expect(parsed[0].type).toBe("plugin");
     expect(JSON.parse(parsed[0].config)).toEqual({
       plugin: "plex",
-      host: "http://plex.lan:32400",
       token: "tok",
     });
     expect(parsed[1].type).toBe("webhook");
@@ -88,7 +96,7 @@ describe("parseHookForm", () => {
   it("drops groups without a type field (incomplete rows)", () => {
     const body = {
       "hooks[0][plugin]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
+      "hooks[0][token]": "tok",
     };
     expect(parseHookForm(body)).toEqual([]);
   });
@@ -97,20 +105,17 @@ describe("parseHookForm", () => {
     const body = {
       "hooks[0][type]": "plugin",
       "hooks[0][plugin]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "",
     };
     const parsed = parseHookForm(body);
     expect(JSON.parse(parsed[0].config)).toEqual({
       plugin: "plex",
-      host: "http://plex.lan:32400",
     });
   });
 
   it("translates a display-level 'plex' submission into storage shape { type:'plugin', config.plugin:'plex' }", () => {
     const body = {
       "hooks[0][type]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "tok",
     };
     const parsed = parseHookForm(body);
@@ -118,21 +123,28 @@ describe("parseHookForm", () => {
     expect(parsed[0].type).toBe("plugin");
     expect(JSON.parse(parsed[0].config)).toEqual({
       plugin: "plex",
-      host: "http://plex.lan:32400",
       token: "tok",
     });
   });
 
-  it("leaves webhook and command types unchanged by the plugin translation", () => {
+  it("round-trips webhook custom headers into config.headers", () => {
     const body = {
       "hooks[0][type]": "webhook",
       "hooks[0][url]": "https://example.com/hook",
       "hooks[0][method]": "POST",
-      "hooks[1][type]": "command",
-      "hooks[1][command]": "/bin/echo {{label}}",
+      "hooks[0][headers][0][name]": "Authorization",
+      "hooks[0][headers][0][value]": "Bearer abc",
+      "hooks[0][headers][1][name]": "X-Trace",
+      "hooks[0][headers][1][value]": "1",
+      "hooks[0][headers][2][name]": "",
+      "hooks[0][headers][2][value]": "ignored-no-name",
     };
     const parsed = parseHookForm(body);
-    expect(parsed[0].type).toBe("webhook");
-    expect(parsed[1].type).toBe("command");
+    expect(parsed).toHaveLength(1);
+    expect(JSON.parse(parsed[0].config)).toEqual({
+      url: "https://example.com/hook",
+      method: "POST",
+      headers: { Authorization: "Bearer abc", "X-Trace": "1" },
+    });
   });
 });

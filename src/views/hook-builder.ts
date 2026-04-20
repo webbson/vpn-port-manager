@@ -1,16 +1,18 @@
 import type { Hook } from '../db.js';
 import { hookPluginDescriptors } from '../hooks/plugins/registry.js';
 
-interface HookSeed {
-  type: string;
-  config: Record<string, string>;
+interface HookSeedConfig {
+  [k: string]: string | Record<string, string>;
 }
 
 // Convert a stored Hook row into the display-level seed the builder uses.
 // When the row has type === "plugin", the display type becomes the inner
 // config.plugin value (e.g. "plex") and the "plugin" key is stripped from
 // the config so the form doesn't re-emit it as a duplicate input.
-function seedHook(hook: Hook): HookSeed {
+// The webhook `headers` field is preserved as a nested object so the
+// webhook fields can render one row per header; everything else is
+// stringified so the <input value="..."> attributes don't break.
+function seedHook(hook: Hook): { type: string; config: HookSeedConfig } {
   let cfg: Record<string, unknown> = {};
   try {
     const parsed = JSON.parse(hook.config);
@@ -27,11 +29,20 @@ function seedHook(hook: Hook): HookSeed {
     delete cfg.plugin;
   }
 
-  const stringified: Record<string, string> = {};
+  const out: HookSeedConfig = {};
   for (const [k, v] of Object.entries(cfg)) {
-    if (v !== null && v !== undefined) stringified[k] = String(v);
+    if (v === null || v === undefined) continue;
+    if (k === 'headers' && typeof v === 'object' && !Array.isArray(v)) {
+      const headers: Record<string, string> = {};
+      for (const [hk, hv] of Object.entries(v as Record<string, unknown>)) {
+        if (hv !== null && hv !== undefined) headers[hk] = String(hv);
+      }
+      out.headers = headers;
+    } else if (typeof v !== 'object') {
+      out[k] = String(v);
+    }
   }
-  return { type: displayType, config: stringified };
+  return { type: displayType, config: out };
 }
 
 // Returns the hook-builder UI: a container, an "+ Add Hook" button, and the
@@ -42,19 +53,13 @@ export function hookBuilder(existing: Hook[] = []): string {
   const seeds = existing.map(seedHook);
   const seedLiteral = JSON.stringify(seeds).replace(/</g, '\\u003c');
 
-  // Server-rendered option list: plugins first, then webhook & command.
+  // Server-rendered option list: plugins first, then webhook.
   const typeOptions = [
     ...hookPluginDescriptors.map((d) => ({ id: d.id, label: d.label, description: d.description })),
     {
       id: 'webhook',
       label: 'Webhook',
       description: 'POST the hook payload as JSON to any URL (2xx = success).',
-    },
-    {
-      id: 'command',
-      label: 'Command',
-      description:
-        'Run a shell command. Use {{label}}, {{oldPort}}, {{newPort}}, {{destIp}}, {{destPort}}, {{mappingId}} as placeholders.',
     },
   ];
   const typeOptionsLiteral = JSON.stringify(typeOptions).replace(/</g, '\\u003c');
@@ -111,6 +116,16 @@ export function hookBuilder(existing: Hook[] = []): string {
           }).join('');
         }
 
+        function headerRowHtml(n, i, name, value) {
+          return '<div class="webhook-header-row" data-idx="' + i + '" style="display:flex;gap:8px;margin-bottom:6px;">' +
+              '<input type="text" name="hooks[' + n + '][headers][' + i + '][name]"' +
+                ' value="' + esc(name) + '" placeholder="Header name (e.g. Authorization)" style="flex:1;" />' +
+              '<input type="text" name="hooks[' + n + '][headers][' + i + '][value]"' +
+                ' value="' + esc(value) + '" placeholder="Value" style="flex:1;" />' +
+              '<button type="button" class="btn secondary webhook-header-remove" tabindex="-1">Remove</button>' +
+            '</div>';
+        }
+
         function webhookFields(n, cfg) {
           cfg = cfg || {};
           var methods = ['POST', 'GET', 'PUT'];
@@ -119,26 +134,123 @@ export function hookBuilder(existing: Hook[] = []): string {
             var sel = m === current ? ' selected' : '';
             return '<option value="' + m + '"' + sel + '>' + m + '</option>';
           }).join('');
+
+          var headerPairs = [];
+          var rawHeaders = cfg.headers;
+          if (rawHeaders && typeof rawHeaders === 'object') {
+            for (var k in rawHeaders) {
+              if (Object.prototype.hasOwnProperty.call(rawHeaders, k)) {
+                headerPairs.push([k, String(rawHeaders[k])]);
+              }
+            }
+          }
+          var headerRowsHtml = headerPairs.map(function (p, i) {
+            return headerRowHtml(n, i, p[0], p[1]);
+          }).join('');
+
           return '<div class="form-group">' +
               '<label>Webhook URL</label>' +
-              '<input type="text" name="hooks[' + n + '][url]" required value="' + esc(cfg.url) + '" placeholder="https://..." />' +
-              '<div class="form-help">The full hook payload is POSTed as JSON. Any 2xx response is treated as success.</div>' +
+              '<input type="text" class="webhook-url" name="hooks[' + n + '][url]" required value="' + esc(cfg.url) + '" placeholder="https://..." />' +
+              '<div class="form-help">The full hook payload is sent as JSON. Any 2xx response is treated as success.</div>' +
             '</div>' +
             '<div class="form-group">' +
               '<label>Method</label>' +
-              '<select name="hooks[' + n + '][method]">' + methodOpts + '</select>' +
+              '<select class="webhook-method" name="hooks[' + n + '][method]">' + methodOpts + '</select>' +
+            '</div>' +
+            '<div class="form-group">' +
+              '<label>Custom headers</label>' +
+              '<div class="webhook-headers" data-next-idx="' + headerPairs.length + '">' + headerRowsHtml + '</div>' +
+              '<button type="button" class="btn secondary webhook-header-add" style="margin-top:4px;">+ Add header</button>' +
+              '<div class="form-help">Content-Type: application/json is always sent. Custom headers override it if you set one with the same name.</div>' +
+            '</div>' +
+            '<div class="form-group">' +
+              '<label>Example request</label>' +
+              '<pre class="webhook-example" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:12px;white-space:pre-wrap;word-break:break-all;margin:0;"></pre>' +
+              '<div class="form-help">Preview of the outgoing request using a sample payload.</div>' +
             '</div>';
         }
 
-        function commandFields(n, cfg) {
-          cfg = cfg || {};
-          return '<div class="form-group">' +
-              '<label>Command</label>' +
-              '<input type="text" name="hooks[' + n + '][command]" required value="' + esc(cfg.command) +
-                '" placeholder="e.g. /usr/local/bin/notify.sh {{label}} {{newPort}}" />' +
-              '<div class="form-help">Runs via sh -c inside the container (30s timeout). ' +
-                'Placeholders: {{label}}, {{oldPort}}, {{newPort}}, {{destIp}}, {{destPort}}, {{mappingId}}.</div>' +
-            '</div>';
+        var SAMPLE_PAYLOAD = {
+          mappingId: '7b3c9e2a-...',
+          label: 'Plex',
+          oldPort: 58216,
+          newPort: 59000,
+          destIp: '10.0.17.249',
+          destPort: 32400
+        };
+
+        function collectWebhookHeaders(wrapper) {
+          var rows = wrapper.querySelectorAll('.webhook-header-row');
+          var out = [];
+          rows.forEach(function (row) {
+            var inputs = row.querySelectorAll('input');
+            var name = inputs[0] ? inputs[0].value.trim() : '';
+            var value = inputs[1] ? inputs[1].value : '';
+            if (name) out.push([name, value]);
+          });
+          return out;
+        }
+
+        function renderWebhookExample(wrapper) {
+          var pre = wrapper.querySelector('.webhook-example');
+          if (!pre) return;
+          var urlEl = wrapper.querySelector('.webhook-url');
+          var methodEl = wrapper.querySelector('.webhook-method');
+          var url = urlEl && urlEl.value ? urlEl.value : 'https://example.com/hook';
+          var method = methodEl && methodEl.value ? methodEl.value : 'POST';
+          var headers = [['Content-Type', 'application/json']];
+          collectWebhookHeaders(wrapper).forEach(function (p) { headers.push(p); });
+
+          var path = '/';
+          var host = '';
+          try {
+            var u = new URL(url);
+            path = u.pathname + u.search;
+            host = u.host;
+          } catch (e) {
+            path = url;
+          }
+
+          var lines = [];
+          lines.push(method + ' ' + path + ' HTTP/1.1');
+          if (host) lines.push('Host: ' + host);
+          headers.forEach(function (h) { lines.push(h[0] + ': ' + h[1]); });
+          lines.push('');
+          lines.push(JSON.stringify(SAMPLE_PAYLOAD, null, 2));
+          pre.textContent = lines.join('\n');
+        }
+
+        function bindWebhookControls(wrapper, n) {
+          var fieldsDiv = wrapper.querySelector('.hook-dynamic-fields');
+          var container = wrapper.querySelector('.webhook-headers');
+          var addBtn = wrapper.querySelector('.webhook-header-add');
+          if (!fieldsDiv || !container || !addBtn) return;
+
+          // Listeners live on the fields div, which is replaced whenever the
+          // hook type changes — so they don't accumulate across switches.
+          fieldsDiv.addEventListener('input', function () {
+            renderWebhookExample(wrapper);
+          });
+          fieldsDiv.addEventListener('change', function () {
+            renderWebhookExample(wrapper);
+          });
+
+          addBtn.addEventListener('click', function () {
+            var next = parseInt(container.getAttribute('data-next-idx') || '0', 10);
+            container.insertAdjacentHTML('beforeend', headerRowHtml(n, next, '', ''));
+            container.setAttribute('data-next-idx', String(next + 1));
+            renderWebhookExample(wrapper);
+          });
+
+          container.addEventListener('click', function (ev) {
+            var btn = ev.target.closest && ev.target.closest('.webhook-header-remove');
+            if (!btn) return;
+            var row = btn.closest('.webhook-header-row');
+            if (row) row.remove();
+            renderWebhookExample(wrapper);
+          });
+
+          renderWebhookExample(wrapper);
         }
 
         function renderFields(wrapper, n, type, cfg) {
@@ -146,8 +258,11 @@ export function hookBuilder(existing: Hook[] = []): string {
           var helpDiv = wrapper.querySelector('.hook-type-help');
           if (helpDiv) helpDiv.textContent = descriptionFor(type);
 
-          if (type === 'webhook') { fieldsDiv.innerHTML = webhookFields(n, cfg); return; }
-          if (type === 'command') { fieldsDiv.innerHTML = commandFields(n, cfg); return; }
+          if (type === 'webhook') {
+            fieldsDiv.innerHTML = webhookFields(n, cfg);
+            bindWebhookControls(wrapper, n);
+            return;
+          }
           var desc = pluginDescriptor(type);
           if (desc) { fieldsDiv.innerHTML = pluginFields(n, desc, cfg); return; }
           fieldsDiv.innerHTML = '';
@@ -203,11 +318,27 @@ export function hookBuilder(existing: Hook[] = []): string {
 // { type, config } entries (config as a JSON string ready for DB).
 // Display-level plugin types (e.g. "plex") are translated to the storage
 // shape the runner expects: type: "plugin", config.plugin: "<id>".
+// Webhook custom headers arrive as `hooks[N][headers][i][name|value]`
+// pairs and are collected into a single `headers: Record<string,string>`
+// object on the config.
 export function parseHookForm(
   body: Record<string, unknown>
 ): { type: string; config: string }[] {
   const grouped: Record<number, Record<string, string>> = {};
+  const headerGroups: Record<number, Record<number, { name?: string; value?: string }>> = {};
+
   for (const [key, value] of Object.entries(body)) {
+    const headerMatch = key.match(/^hooks\[(\d+)\]\[headers\]\[(\d+)\]\[(name|value)\]$/);
+    if (headerMatch) {
+      const idx = parseInt(headerMatch[1], 10);
+      const hIdx = parseInt(headerMatch[2], 10);
+      const field = headerMatch[3] as 'name' | 'value';
+      if (!headerGroups[idx]) headerGroups[idx] = {};
+      if (!headerGroups[idx][hIdx]) headerGroups[idx][hIdx] = {};
+      const raw = String(value ?? '');
+      headerGroups[idx][hIdx][field] = field === 'name' ? raw.trim() : raw;
+      continue;
+    }
     const match = key.match(/^hooks\[(\d+)\]\[(\w+)\]$/);
     if (!match) continue;
     const idx = parseInt(match[1], 10);
@@ -218,13 +349,27 @@ export function parseHookForm(
 
   const pluginIds = new Set(hookPluginDescriptors.map((d) => d.id));
 
+  const allIndices = new Set<number>([
+    ...Object.keys(grouped).map(Number),
+    ...Object.keys(headerGroups).map(Number),
+  ]);
+
   const result: { type: string; config: string }[] = [];
-  for (const group of Object.values(grouped)) {
+  for (const idx of allIndices) {
+    const group = grouped[idx] ?? {};
     const { type, ...rest } = group;
     if (!type) continue;
-    const nonEmpty: Record<string, string> = {};
+    const nonEmpty: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(rest)) {
       if (v !== '') nonEmpty[k] = v;
+    }
+    const hgroup = headerGroups[idx];
+    if (hgroup) {
+      const headers: Record<string, string> = {};
+      for (const row of Object.values(hgroup)) {
+        if (row.name) headers[row.name] = row.value ?? '';
+      }
+      if (Object.keys(headers).length > 0) nonEmpty.headers = headers;
     }
     if (pluginIds.has(type)) {
       result.push({

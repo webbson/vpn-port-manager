@@ -67,7 +67,7 @@ if (runtime.isReady()) {
   console.log(`  Port:          ${config.port}`);
   console.log(`  Provider:      ${provider.name} (max ${runtime.getMaxPorts()} ports)`);
   console.log(`  Router:        ${router.name} @ ${routerSettings.host}`);
-  console.log(`  Sync interval: ${appSettings.syncIntervalMs}ms`);
+  console.log(`  Sync interval: ${appSettings.syncIntervalMinutes} min`);
 } else {
   const issues = settings.getIssues();
   if (issues.messages.length > 0) {

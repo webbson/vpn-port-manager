@@ -12,7 +12,6 @@ const payload: HookPayload = {
 };
 
 const config = {
-  host: "http://192.168.1.100:32400",
   token: "myplextoken",
 };
 
@@ -34,8 +33,9 @@ describe("plexPlugin", () => {
     expect(result.success).toBe(true);
     expect(mockFetch).toHaveBeenCalledOnce();
     const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    expect(url).toContain("ManualPortMappingPort=59000");
-    expect(url).toContain("X-Plex-Token=myplextoken");
+    expect(url).toBe(
+      "http://10.0.17.249:32400/:/prefs?ManualPortMappingPort=59000&X-Plex-Token=myplextoken",
+    );
     expect(options.method).toBe("PUT");
   });
 

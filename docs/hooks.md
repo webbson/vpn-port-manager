@@ -4,13 +4,12 @@ Hooks are called whenever a port mapping changes state — created, port recycle
 
 ## Hook types
 
-Three types, all defined in `src/hooks/runner.ts`:
+Two types, all defined in `src/hooks/runner.ts`:
 
 | Type | Use when |
 |---|---|
 | `plugin` | You have a first-class integration with a specific service (e.g. Plex). Logic lives in `src/hooks/plugins/<name>.ts`. |
-| `webhook` | You want to POST the payload as JSON to an arbitrary HTTP endpoint. |
-| `command` | You want to run a shell command with `{{variable}}` template substitution. |
+| `webhook` | You want to send the payload as JSON to an arbitrary HTTP endpoint (POST/GET/PUT with optional custom headers). |
 
 All three receive the same `HookPayload`:
 
@@ -37,7 +36,7 @@ Called from `src/routes/api.ts`, `src/routes/ui.ts`, and `src/sync.ts`:
 
 The sync watchdog also retries hooks whose last run recorded `status: "error"` (`src/sync.ts:retryFailedHooks`), so transient failures self-heal.
 
-## `webhook` — HTTP POST
+## `webhook` — HTTP request
 
 Config shape (JSON-stringified and stored in the `hooks` table):
 
@@ -49,44 +48,25 @@ Config shape (JSON-stringified and stored in the `hooks` table):
 }
 ```
 
-`method` defaults to `POST`; `headers` is optional (merged on top of `Content-Type: application/json`). The body is the raw `HookPayload` object serialized as JSON. Non-2xx responses mark the hook `error` with the status line.
-
-## `command` — shell execution
-
-Config shape:
-
-```json
-{ "command": "/usr/local/bin/notify.sh {{label}} {{newPort}}" }
-```
-
-Supported template variables:
-
-- `{{mappingId}}`
-- `{{label}}`
-- `{{oldPort}}` — empty string when `null`
-- `{{newPort}}` — empty string when `null`
-- `{{destIp}}`
-- `{{destPort}}`
-
-Executed via `child_process.execSync` with a 30-second timeout. The command string is passed to the shell, so **quote any template value that may contain unexpected characters**. `label` is user-controlled input — treat it as untrusted and quote it in the command template.
+`method` defaults to `POST` (GET/PUT are also selectable in the UI); `headers` is optional (merged on top of `Content-Type: application/json`). The body is the raw `HookPayload` object serialized as JSON. Non-2xx responses mark the hook `error` with the status line. The hook-builder renders a live "Example request" preview so you can see exactly what goes over the wire.
 
 ## `plugin` — built-in integrations
 
-Plugin hooks route to a named implementation under `src/hooks/plugins/`. In the UI each registered plugin appears as its own hook type (alongside **Webhook** and **Command**), so picking **Plex** is a single click — the nested `plugin` indirection happens automatically at save time.
+Plugin hooks route to a named implementation under `src/hooks/plugins/`. In the UI each registered plugin appears as its own hook type (alongside **Webhook**), so picking **Plex** is a single click — the nested `plugin` indirection happens automatically at save time.
 
 ### Plex
 
 Config stored in the DB:
 
 ```json
-{ "plugin": "plex", "host": "http://plex.lan:32400", "token": "<X-Plex-Token>" }
+{ "plugin": "plex", "token": "<X-Plex-Token>" }
 ```
 
-On every port change the runner PUTs `{host}/:/prefs?ManualPortMappingPort={newPort}&X-Plex-Token={token}` (no call when `newPort` is `null`, i.e. on delete).
+On every port change the runner PUTs `http://{destIp}:{destPort}/:/prefs?ManualPortMappingPort={newPort}&X-Plex-Token={token}` (no call when `newPort` is `null`, i.e. on delete). The Plex URL is derived from the mapping's destination IP and port — there's no separate server-URL field.
 
 **Where to find your X-Plex-Token**: in the Plex web UI, play any item → **…** (More) → **Get Info** → **View XML**. A new tab opens with a URL containing `X-Plex-Token=…` — copy that value. Official guide: <https://support.plex.tv/articles/204059436>.
 
-**Container networking**: the `host` URL is fetched from *inside* this container. If Plex runs on the Docker host itself, `http://localhost:32400` won't work — use the LAN IP, the Docker bridge gateway, or put both containers on the same user-defined network. Test quickly with `docker compose exec vpn-port-manager wget -qO- <host>/identity`.
+**Container networking**: the derived URL is fetched from *inside* this container. If Plex runs on the Docker host itself, the mapping's destination IP must be reachable from inside the container — use the LAN IP, the Docker bridge gateway, or put both containers on the same user-defined network. Test quickly with `docker compose exec vpn-port-manager wget -qO- http://<destIp>:<destPort>/identity`.
 
 ### Adding a plugin
 
@@ -135,10 +115,9 @@ On every port change the runner PUTs `{host}/:/prefs?ManualPortMappingPort={newP
 
 Plugins/webhooks/commands return `{ success: boolean; error?: string }` — never throw. The runner persists the latest status per-hook in the `hooks` table (`lastStatus`, `lastError`). The dashboard currently only shows an aggregate status, but `GET /api/mappings` and `GET /api/logs` both surface per-hook error text.
 
-The sync watchdog retries hooks with `lastStatus === "error"` on every tick, so a Plex server that's restarting will self-heal within one sync interval (`AppSettings.syncIntervalMs`, default 5 minutes). If a hook is permanently misconfigured, it'll keep retrying — there's no exponential backoff. Delete the hook or fix the config to stop the retries.
+The sync watchdog retries hooks with `lastStatus === "error"` on every tick, so a Plex server that's restarting will self-heal within one sync interval (`AppSettings.syncIntervalMinutes`, default 15 minutes). If a hook is permanently misconfigured, it'll keep retrying — there's no exponential backoff. Delete the hook or fix the config to stop the retries.
 
 ## Security notes
 
-- **Command hook** runs under the container's user. Don't expose the web UI publicly without an auth layer — creating a mapping lets anyone set an arbitrary command. This is consistent with the project's threat model (home-lab behind the VPN), but worth restating.
 - **Webhook URL** is not validated beyond shape. Outbound requests originate from inside the container's network — be mindful if you deploy it somewhere with access to internal services.
 - **Plugin config** is stored plaintext in the SQLite `hooks` table. Only app-level settings (VPN/router credentials) are encrypted. Don't store long-lived secrets in hook configs if you can avoid it.

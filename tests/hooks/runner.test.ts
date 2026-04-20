@@ -41,13 +41,34 @@ describe("HookRunner", () => {
     expect(JSON.parse(options.body as string)).toEqual(payload);
   });
 
-  it("resolves template variables correctly", () => {
+  it("sends custom headers on top of Content-Type: application/json", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
     const runner = createHookRunner();
-    const result = runner.resolveTemplate(
-      "/scripts/update.sh {{newPort}} {{destIp}}",
+    const result = await runner.execute(
+      {
+        type: "webhook",
+        config: JSON.stringify({
+          url: "https://example.com/hook",
+          method: "POST",
+          headers: { Authorization: "Bearer abc", "X-Trace": "t1" },
+        }),
+      },
       payload,
     );
-    expect(result).toBe("/scripts/update.sh 59000 10.0.17.249");
+
+    expect(result.success).toBe(true);
+    const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(options.headers).toEqual({
+      "Content-Type": "application/json",
+      Authorization: "Bearer abc",
+      "X-Trace": "t1",
+    });
   });
 
   it("returns error for webhook failure (500)", async () => {

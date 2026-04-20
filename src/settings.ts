@@ -10,16 +10,34 @@ export type RouterSettings = z.infer<typeof routerSettingsSchema>;
 
 export const appSettingsSchema = z.object({
   maxPorts: z.number().int().positive().nullable(),
-  syncIntervalMs: z.number().int().positive(),
+  syncIntervalMinutes: z.number().int().positive(),
   renewThresholdDays: z.number().int().positive(),
 });
 export type AppSettings = z.infer<typeof appSettingsSchema>;
 
 export const DEFAULT_APP_SETTINGS: AppSettings = {
   maxPorts: null,
-  syncIntervalMs: 300000,
+  syncIntervalMinutes: 15,
   renewThresholdDays: 30,
 };
+
+// Upgrades a stored app-settings JSON blob from earlier versions where the
+// sync interval was expressed in milliseconds (`syncIntervalMs`). If the new
+// field is missing and the legacy field is present, convert and drop the old
+// key. Returns the (possibly-unchanged) object.
+function migrateAppSettingsJson(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const obj = raw as Record<string, unknown>;
+  if (
+    obj.syncIntervalMinutes === undefined &&
+    typeof obj.syncIntervalMs === "number" &&
+    obj.syncIntervalMs > 0
+  ) {
+    const { syncIntervalMs, ...rest } = obj;
+    return { ...rest, syncIntervalMinutes: Math.max(1, Math.round((syncIntervalMs as number) / 60000)) };
+  }
+  return obj;
+}
 
 export type SettingStatus = "ok" | "missing" | "invalid";
 
@@ -93,7 +111,8 @@ export function createSettingsService(db: Db, appSecretKey: string): SettingsSer
       const row = db.getSetting("app");
       if (!row) return { ...DEFAULT_APP_SETTINGS };
       try {
-        const parsed = appSettingsSchema.safeParse(JSON.parse(row.valueJson));
+        const migrated = migrateAppSettingsJson(JSON.parse(row.valueJson));
+        const parsed = appSettingsSchema.safeParse(migrated);
         if (!parsed.success) return { ...DEFAULT_APP_SETTINGS };
         return parsed.data;
       } catch {

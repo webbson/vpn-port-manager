@@ -56,13 +56,28 @@ describe("SettingsService", () => {
 
   it("app settings persist in plaintext", () => {
     const svc = createSettingsService(db, KEY);
-    svc.setApp({ maxPorts: 3, syncIntervalMs: 60000, renewThresholdDays: 7 });
+    svc.setApp({ maxPorts: 3, syncIntervalMinutes: 1, renewThresholdDays: 7 });
     const row = db.getSetting("app")!;
     expect(row.encrypted).toBe(false);
     expect(JSON.parse(row.valueJson)).toEqual({
       maxPorts: 3,
-      syncIntervalMs: 60000,
+      syncIntervalMinutes: 1,
       renewThresholdDays: 7,
+    });
+  });
+
+  it("getApp() migrates legacy syncIntervalMs rows to syncIntervalMinutes", () => {
+    // Simulate a pre-migration app-settings row written by an older build.
+    db.setSetting(
+      "app",
+      JSON.stringify({ maxPorts: null, syncIntervalMs: 300000, renewThresholdDays: 30 }),
+      false,
+    );
+    const svc = createSettingsService(db, KEY);
+    expect(svc.getApp()).toEqual({
+      maxPorts: null,
+      syncIntervalMinutes: 5,
+      renewThresholdDays: 30,
     });
   });
 

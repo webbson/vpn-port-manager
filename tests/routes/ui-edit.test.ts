@@ -59,7 +59,7 @@ describe("UI /create fires hooks immediately", () => {
     clearExternalIpCache();
 
     const fetchSpy = vi.fn((url: string) => {
-      if (String(url).startsWith("http://plex.lan:32400/")) {
+      if (String(url).startsWith("http://10.13.37.5:32400/")) {
         return Promise.resolve({ ok: true, status: 200, statusText: "OK",
           json: () => Promise.resolve({}) } as unknown as Response);
       }
@@ -74,7 +74,6 @@ describe("UI /create fires hooks immediately", () => {
       destPort: "32400",
       protocol: "tcp",
       "hooks[0][type]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "tok",
     });
     const res = await app.request("/create", {
@@ -84,7 +83,7 @@ describe("UI /create fires hooks immediately", () => {
     });
     expect(res.status).toBe(302);
 
-    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://plex.lan:32400/"));
+    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://10.13.37.5:32400/"));
     expect(plexCall, "plex fetch was not issued on create").toBeTruthy();
     expect(String(plexCall![0])).toContain("ManualPortMappingPort=60000");
 
@@ -131,7 +130,7 @@ describe("UI /edit/:id hook editing", () => {
       status: "active",
       expiresAt: Math.floor(Date.now() / 1000) + 86400,
     });
-    db.createHook({ mappingId, type: "plugin", config: JSON.stringify({ plugin: "plex", host: "http://plex.lan:32400", token: "old" }) });
+    db.createHook({ mappingId, type: "plugin", config: JSON.stringify({ plugin: "plex", token: "old" }) });
   });
 
   it("GET renders existing plex hooks with display-level type=plex (not nested 'plugin')", async () => {
@@ -139,9 +138,8 @@ describe("UI /edit/:id hook editing", () => {
     expect(res.status).toBe(200);
     const html = await res.text();
     // Stored row is { type: "plugin", config.plugin: "plex" } — surfaced
-    // in the builder seeds as { type: "plex", config: {host,token} }.
+    // in the builder seeds as { type: "plex", config: {token} }.
     expect(html).toContain('"type":"plex"');
-    expect(html).toContain('"host":"http://plex.lan:32400"');
     expect(html).toContain('"token":"old"');
     expect(html).not.toMatch(/"config":\{[^}]*"plugin":"plex"/);
   });
@@ -199,7 +197,7 @@ describe("UI /edit/:id hook editing", () => {
     const res = await app.request(`/hooks/${hook.id}/fire`, { method: "POST" });
     expect(res.status).toBe(302);
 
-    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://plex.lan:32400/"));
+    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://10.0.0.10:22/"));
     expect(plexCall, "plex fetch was not issued").toBeTruthy();
     expect(String(plexCall![0])).toContain("ManualPortMappingPort=60000");
     expect(String(plexCall![0])).toContain("X-Plex-Token=old");
@@ -215,7 +213,6 @@ describe("UI /edit/:id hook editing", () => {
       destPort: "22",
       protocol: "tcp",
       "hooks[0][type]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "new-token",
     });
     const res = await app.request(`/edit/${mappingId}`, {
@@ -230,7 +227,6 @@ describe("UI /edit/:id hook editing", () => {
     expect(hooks[0].type).toBe("plugin");
     expect(JSON.parse(hooks[0].config)).toEqual({
       plugin: "plex",
-      host: "http://plex.lan:32400",
       token: "new-token",
     });
   });
@@ -243,10 +239,12 @@ describe("UI /edit/:id hook editing", () => {
       protocol: "tcp",
       "hooks[0][type]": "plugin",
       "hooks[0][plugin]": "plex",
-      "hooks[0][host]": "http://plex.lan:32400",
       "hooks[0][token]": "new-token",
-      "hooks[1][type]": "command",
-      "hooks[1][command]": "/usr/local/bin/notify.sh {{label}} {{newPort}}",
+      "hooks[1][type]": "webhook",
+      "hooks[1][url]": "https://example.com/hook",
+      "hooks[1][method]": "POST",
+      "hooks[1][headers][0][name]": "X-Trace",
+      "hooks[1][headers][0][value]": "abc",
     });
     const res = await app.request(`/edit/${mappingId}`, {
       method: "POST",
@@ -258,7 +256,11 @@ describe("UI /edit/:id hook editing", () => {
     const hooks = db.listHooks(mappingId);
     expect(hooks).toHaveLength(2);
     const byType = Object.fromEntries(hooks.map((h) => [h.type, JSON.parse(h.config)]));
-    expect(byType.plugin).toEqual({ plugin: "plex", host: "http://plex.lan:32400", token: "new-token" });
-    expect(byType.command).toEqual({ command: "/usr/local/bin/notify.sh {{label}} {{newPort}}" });
+    expect(byType.plugin).toEqual({ plugin: "plex", token: "new-token" });
+    expect(byType.webhook).toEqual({
+      url: "https://example.com/hook",
+      method: "POST",
+      headers: { "X-Trace": "abc" },
+    });
   });
 });

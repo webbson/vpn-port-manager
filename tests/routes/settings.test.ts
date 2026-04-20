@@ -117,7 +117,7 @@ describe("settings API", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       maxPorts: null,
-      syncIntervalMs: 300000,
+      syncIntervalMinutes: 15,
       renewThresholdDays: 30,
     });
   });
@@ -127,11 +127,11 @@ describe("settings API", () => {
     const put = await app.request("/api/settings/app", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxPorts: 3, syncIntervalMs: 60000, renewThresholdDays: 7 }),
+      body: JSON.stringify({ maxPorts: 3, syncIntervalMinutes: 2, renewThresholdDays: 7 }),
     });
     expect(put.status).toBe(200);
     const get = await app.request("/api/settings/app");
-    expect(await get.json()).toEqual({ maxPorts: 3, syncIntervalMs: 60000, renewThresholdDays: 7 });
+    expect(await get.json()).toEqual({ maxPorts: 3, syncIntervalMinutes: 2, renewThresholdDays: 7 });
   });
 
   it("PUT /api/settings/vpn with runtime triggers reloadVpn and returns restartRequired: false", async () => {
@@ -177,7 +177,7 @@ describe("settings API", () => {
     const res = await app.request("/api/settings/app", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ maxPorts: 2, syncIntervalMs: 60000, renewThresholdDays: 7 }),
+      body: JSON.stringify({ maxPorts: 2, syncIntervalMinutes: 1, renewThresholdDays: 7 }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, restartRequired: false });

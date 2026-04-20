@@ -49,7 +49,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       router,
       renewThresholdDays: app.renewThresholdDays,
     });
-    watchdog.start(app.syncIntervalMs);
+    watchdog.start(app.syncIntervalMinutes * 60_000);
     watchdog.runOnce().catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`[runtime] initial sync failed: ${message}`);

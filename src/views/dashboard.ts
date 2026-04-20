@@ -38,10 +38,22 @@ function formatExpiry(expiresAtSeconds: number): string {
   });
 }
 
+function hookLabel(h: Hook): string {
+  if (h.type === 'plugin') {
+    try {
+      const cfg = JSON.parse(h.config) as Record<string, unknown>;
+      if (typeof cfg.plugin === 'string' && cfg.plugin.length > 0) return cfg.plugin;
+    } catch {
+      // fall through
+    }
+  }
+  return h.type;
+}
+
 function hookSummary(hooks: Hook[]): string {
   if (hooks.length === 0) return '<span class="muted">—</span>';
-  const types = [...new Set(hooks.map((h) => escHtml(h.type)))];
-  return types.join(', ');
+  const labels = [...new Set(hooks.map(hookLabel))].map((l) => escHtml(l));
+  return labels.join(', ');
 }
 
 function badgeFor(status: string): string {

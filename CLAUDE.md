@@ -40,16 +40,15 @@ Provider Layer → State Layer (SQLite) → Router Layer → Hook Layer
 SQLite via better-sqlite3. Four tables: `port_mappings`, `hooks`, `sync_log`, `settings`. All DB types use camelCase in TypeScript, snake_case in SQL, with row mapper functions converting between them. The `Db` interface is the single export. A migration step on boot moves any legacy `unifi_dnat_id` / `unifi_firewall_id` columns into the JSON `router_handle` column.
 
 ### Settings Layer (`src/settings.ts`)
-`SettingsService` wraps the `settings` table with encryption. `getVpn()` / `getRouter()` decrypt on read using the key derived from `APP_SECRET_KEY`; `setVpn` / `setRouter` encrypt on write. `getApp()` returns plain `AppSettings` (maxPorts, syncIntervalMs, renewThresholdDays) with sensible defaults. `isConfigured()` gates setup mode. Encryption lives in `src/crypto.ts` (AES-256-GCM, scrypt KDF, `v1:` versioned blob format).
+`SettingsService` wraps the `settings` table with encryption. `getVpn()` / `getRouter()` decrypt on read using the key derived from `APP_SECRET_KEY`; `setVpn` / `setRouter` encrypt on write. `getApp()` returns plain `AppSettings` (maxPorts, syncIntervalMinutes, renewThresholdDays) with sensible defaults and migrates any legacy `syncIntervalMs` rows on read. `isConfigured()` gates setup mode. Encryption lives in `src/crypto.ts` (AES-256-GCM, scrypt KDF, `v1:` versioned blob format).
 
 ### Hook Layer (`src/hooks/`)
-Three hook types, all receiving `HookPayload` with old/new port info:
+Two hook types, all receiving `HookPayload` with old/new port info:
 - **Plugin:** Built-in integrations (Plex in `plugins/plex.ts`). Register new plugins in the `plugins` map in `runner.ts`.
-- **Webhook:** HTTP POST to a URL with the payload as JSON.
-- **Command:** Shell execution with `{{variable}}` template substitution.
+- **Webhook:** HTTP request (POST/GET/PUT) to a URL with the payload as JSON and optional custom headers.
 
 ### Sync Watchdog (`src/sync.ts`)
-Periodic background job: provider sync check → renewal check → router rule repair → failed hook retry. Interval is `AppSettings.syncIntervalMs` (stored in the `settings` table, default 5 min). Rule repair calls `router.repairPortForward(handle, spec)` which re-creates any missing underlying rules and returns a possibly-updated handle.
+Periodic background job: provider sync check → renewal check → router rule repair → failed hook retry. Interval is `AppSettings.syncIntervalMinutes` (stored in the `settings` table, default 15 min). Rule repair calls `router.repairPortForward(handle, spec)` which re-creates any missing underlying rules and returns a possibly-updated handle.
 
 ### Web Layer (`src/routes/`, `src/views/`)
 Hono framework. REST API at `/api/*` (mappings, settings, status, logs) consumed by the server-rendered HTML UI at `/`. Views are plain TypeScript functions returning HTML strings — no frontend framework. Two routing modes in `src/index.ts`:

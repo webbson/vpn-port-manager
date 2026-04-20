@@ -64,6 +64,43 @@ describe("dashboardView", () => {
     expect(html).toContain('<span class="port-num">60000</span>');
   });
 
+  it("shows the plugin id (e.g. 'plex') in the hooks column, not the literal storage type 'plugin'", () => {
+    const m = baseMapping({
+      hooks: [
+        {
+          id: "h1",
+          mappingId: "m1",
+          type: "plugin",
+          config: JSON.stringify({ plugin: "plex", token: "t" }),
+          lastRunAt: null,
+          lastStatus: null,
+          lastError: null,
+        },
+      ],
+    });
+    const html = dashboardView([m], status);
+    expect(html).toContain(">plex<");
+    expect(html).not.toMatch(/>plugin</);
+  });
+
+  it("falls back to the stored type for non-plugin hooks (e.g. webhook)", () => {
+    const m = baseMapping({
+      hooks: [
+        {
+          id: "h2",
+          mappingId: "m1",
+          type: "webhook",
+          config: JSON.stringify({ url: "https://example.com/hook" }),
+          lastRunAt: null,
+          lastStatus: null,
+          lastError: null,
+        },
+      ],
+    });
+    const html = dashboardView([m], status);
+    expect(html).toContain(">webhook<");
+  });
+
   it("renders a Dangling Ports section only when there are dangling ports", () => {
     const nowSec = Math.floor(Date.now() / 1000);
     const noDangling = dashboardView([], status);

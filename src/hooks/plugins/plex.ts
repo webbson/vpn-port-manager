@@ -8,7 +8,7 @@ export const plexPlugin: HookPlugin = {
       return { success: true };
     }
 
-    const url = `${config.host}/:/prefs?ManualPortMappingPort=${payload.newPort}&X-Plex-Token=${config.token}`;
+    const url = `http://${payload.destIp}:${payload.destPort}/:/prefs?ManualPortMappingPort=${payload.newPort}&X-Plex-Token=${config.token}`;
 
     try {
       const response = await fetch(url, { method: "PUT" });

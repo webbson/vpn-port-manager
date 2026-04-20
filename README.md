@@ -21,7 +21,7 @@ A Docker-based control interface for managing VPN port forwardings and automatic
       │    ┌─────────────┘
       │    ▼
       │  ┌──────────┐
-      └──│ Sync     │  ← runs every 5 min
+      └──│ Sync     │  ← runs every 15 min
          │ Watchdog │    detects drift, renews, retries
          └──────────┘
 ```

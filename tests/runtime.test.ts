@@ -126,7 +126,7 @@ describe("runtime", () => {
 
     expect(runtime.getMaxPorts()).toBe(5);
 
-    settings.setApp({ maxPorts: 2, syncIntervalMs: 60000, renewThresholdDays: 7 });
+    settings.setApp({ maxPorts: 2, syncIntervalMinutes: 1, renewThresholdDays: 7 });
     runtime.reloadApp();
     expect(runtime.getMaxPorts()).toBe(2);
     runtime.stop();

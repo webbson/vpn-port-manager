@@ -16,7 +16,7 @@ export function settingsView(props: SettingsViewProps): string {
 
   const app = props.app;
   const maxPorts = app.maxPorts ?? "";
-  const syncIntervalMs = app.syncIntervalMs;
+  const syncIntervalMinutes = app.syncIntervalMinutes;
   const renewDays = app.renewThresholdDays;
 
   return `
@@ -99,8 +99,8 @@ export function settingsView(props: SettingsViewProps): string {
         <input id="app-maxPorts" name="maxPorts" type="number" min="1" value="${escHtml(String(maxPorts))}" />
       </div>
       <div class="form-group">
-        <label for="app-syncIntervalMs">Sync interval (ms)</label>
-        <input id="app-syncIntervalMs" name="syncIntervalMs" type="number" min="1000" value="${escHtml(syncIntervalMs)}" />
+        <label for="app-syncIntervalMinutes">Sync interval (minutes)</label>
+        <input id="app-syncIntervalMinutes" name="syncIntervalMinutes" type="number" min="1" value="${escHtml(syncIntervalMinutes)}" />
       </div>
       <div class="form-group">
         <label for="app-renewDays">Renew threshold (days)</label>
@@ -229,7 +229,7 @@ function dispatchScript(props: SettingsViewProps): string {
       const maxPortsStr = document.getElementById('app-maxPorts').value.trim();
       const body = {
         maxPorts: maxPortsStr === '' ? null : Number(maxPortsStr),
-        syncIntervalMs: Number(document.getElementById('app-syncIntervalMs').value),
+        syncIntervalMinutes: Number(document.getElementById('app-syncIntervalMinutes').value),
         renewThresholdDays: Number(document.getElementById('app-renewDays').value),
       };
       const { ok, data } = await postJson('/api/settings/app', 'PUT', body);
