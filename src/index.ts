@@ -30,12 +30,15 @@ app.get("/settings", (c) => {
         vpn: settings.getVpn(),
         router: settings.getRouter(),
         app: settings.getApp(),
+        issues: settings.getIssues().messages,
       })
     )
   );
 });
 
-app.get("/setup", (c) => c.html(layout("Setup", setupView())));
+app.get("/setup", (c) =>
+  c.html(layout("Setup", setupView({ issues: settings.getIssues().messages })))
+);
 
 let watchdog: ReturnType<typeof createSyncWatchdog> | null = null;
 
@@ -83,7 +86,13 @@ if (settings.isConfigured()) {
     return c.redirect("/setup");
   });
 
-  console.log("VPN Port Manager starting (setup mode — not yet configured)");
+  const issues = settings.getIssues();
+  if (issues.messages.length > 0) {
+    console.log("VPN Port Manager starting (setup mode — stored settings need re-entry)");
+    for (const msg of issues.messages) console.log(`  ! ${msg}`);
+  } else {
+    console.log("VPN Port Manager starting (setup mode — not yet configured)");
+  }
   console.log(`  Port:          ${config.port}`);
   console.log(`  Open http://<host>:${config.port}/setup to configure.`);
 }

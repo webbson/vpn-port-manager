@@ -83,11 +83,37 @@ describe("SettingsService", () => {
     expect(svc.isConfigured()).toBe(true);
   });
 
-  it("throws a clear error when the key has changed", () => {
+  it("throws a clear error when the key has changed (so we never overwrite data)", () => {
     const svc = createSettingsService(db, KEY);
     svc.setVpn({ provider: "azire", apiToken: "t", internalIp: "10.0.0.1" });
     const other = createSettingsService(db, "different-secret-key-0000000000");
     expect(() => other.getVpn()).toThrow(/APP_SECRET_KEY wrong or data corrupt/);
+  });
+
+  it("treats a stale/incompatible router row as invalid without throwing", () => {
+    // Simulate a router row from a previous version of the schema
+    const svc = createSettingsService(db, KEY);
+    // Write raw (encrypted) JSON with the old vpnInterface shape
+    // using setVpn then manually poking setSetting for router
+    svc.setVpn({ provider: "azire", apiToken: "tok", internalIp: "10.0.0.1" });
+    db.setSetting(
+      "router",
+      // Plain JSON (encrypted=false) — settings service should still try schema
+      JSON.stringify({ type: "unifi", host: "https://1.2.3.4", username: "u", password: "p", vpnInterface: "wg0" }),
+      false
+    );
+
+    // Must not throw
+    const issues = svc.getIssues();
+    expect(issues.router).toBe("invalid");
+    expect(issues.vpn).toBe("ok");
+    expect(issues.messages.some((m) => /Router settings need re-save/.test(m))).toBe(true);
+
+    // getRouter returns null rather than throwing
+    expect(svc.getRouter()).toBeNull();
+
+    // isConfigured reflects the stale state
+    expect(svc.isConfigured()).toBe(false);
   });
 
   it("rejects invalid settings at the boundary", () => {

@@ -7,6 +7,7 @@ interface SettingsViewProps {
   vpn: VpnSettings | null;
   router: RouterSettings | null;
   app: AppSettings;
+  issues?: string[];
 }
 
 export function settingsView(props: SettingsViewProps): string {
@@ -31,6 +32,13 @@ export function settingsView(props: SettingsViewProps): string {
     <div class="page-header">
       <h1>Settings</h1>
     </div>
+
+    ${(props.issues && props.issues.length)
+      ? `<div class="info-box" style="border-color:#d2992255;background:#3d2f05;color:#d29922;">
+           <strong>Stored settings need re-entry.</strong>
+           <ul style="margin:8px 0 0 18px;">${props.issues.map((m) => `<li>${escHtml(m)}</li>`).join("")}</ul>
+         </div>`
+      : ""}
 
     <div class="info-box">
       Saving any section below requires a <strong>container restart</strong> to take effect.

@@ -1,8 +1,19 @@
-export function setupView(): string {
+import { escHtml } from "./layout.js";
+
+export function setupView(props: { issues?: string[] } = {}): string {
+  const issues = props.issues ?? [];
+  const staleBanner = issues.length
+    ? `<div class="info-box" style="border-color:#d2992255;background:#3d2f05;color:#d29922;">
+         <strong>Previously-saved settings need re-entry.</strong>
+         <ul style="margin:8px 0 0 18px;">${issues.map((m) => `<li>${escHtml(m)}</li>`).join("")}</ul>
+       </div>`
+    : "";
   return `
     <div class="page-header">
       <h1>Set up VPN Port Manager</h1>
     </div>
+
+    ${staleBanner}
 
     <div class="info-box">
       Enter your VPN provider credentials and router details below. Once both sections are saved,

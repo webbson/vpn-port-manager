@@ -33,6 +33,14 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   renewThresholdDays: 30,
 };
 
+export type SettingStatus = "ok" | "missing" | "invalid";
+
+export interface SettingsIssues {
+  vpn: SettingStatus;
+  router: SettingStatus;
+  messages: string[];
+}
+
 export interface SettingsService {
   getVpn(): VpnSettings | null;
   getRouter(): RouterSettings | null;
@@ -41,20 +49,37 @@ export interface SettingsService {
   setRouter(r: RouterSettings): void;
   setApp(a: AppSettings): void;
   isConfigured(): boolean;
+  getIssues(): SettingsIssues;
 }
 
 export function createSettingsService(db: Db, appSecretKey: string): SettingsService {
-  function readEncrypted<T>(key: string, schema: z.ZodType<T>): T | null {
+  // Reads a row and decrypts if necessary. Hard-fails on decrypt errors (wrong
+  // APP_SECRET_KEY) so we never silently overwrite valid encrypted data with
+  // fresh blank values. Returns null if the row is missing OR if its shape no
+  // longer matches the current schema — that scenario shows up in the UI as
+  // "needs re-save".
+  function readAndValidate<T>(
+    key: string,
+    schema: z.ZodType<T>
+  ): { value: T | null; status: SettingStatus; error?: string } {
     const row = db.getSetting(key);
-    if (!row) return null;
+    if (!row) return { value: null, status: "missing" };
     const raw = row.encrypted ? decrypt(row.valueJson, appSecretKey) : row.valueJson;
-    const parsed = schema.safeParse(JSON.parse(raw));
-    if (!parsed.success) {
-      throw new Error(
-        `Stored ${key} settings failed validation: ${JSON.stringify(parsed.error.issues)}`
-      );
+    let data: unknown;
+    try {
+      data = JSON.parse(raw);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[settings] ${key} row is not valid JSON: ${msg}`);
+      return { value: null, status: "invalid", error: msg };
     }
-    return parsed.data;
+    const parsed = schema.safeParse(data);
+    if (!parsed.success) {
+      const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ");
+      console.warn(`[settings] ${key} row fails current schema — needs re-save: ${msg}`);
+      return { value: null, status: "invalid", error: msg };
+    }
+    return { value: parsed.data, status: "ok" };
   }
 
   function writeEncrypted<T>(key: string, value: T): void {
@@ -65,16 +90,27 @@ export function createSettingsService(db: Db, appSecretKey: string): SettingsSer
     db.setSetting(key, JSON.stringify(value), false);
   }
 
+  function vpnRead() {
+    return readAndValidate("vpn", vpnSettingsSchema);
+  }
+  function routerRead() {
+    return readAndValidate("router", routerSettingsSchema);
+  }
+
   return {
-    getVpn: () => readEncrypted("vpn", vpnSettingsSchema),
-    getRouter: () => readEncrypted("router", routerSettingsSchema),
+    getVpn: () => vpnRead().value,
+    getRouter: () => routerRead().value,
 
     getApp(): AppSettings {
       const row = db.getSetting("app");
       if (!row) return { ...DEFAULT_APP_SETTINGS };
-      const parsed = appSettingsSchema.safeParse(JSON.parse(row.valueJson));
-      if (!parsed.success) return { ...DEFAULT_APP_SETTINGS };
-      return parsed.data;
+      try {
+        const parsed = appSettingsSchema.safeParse(JSON.parse(row.valueJson));
+        if (!parsed.success) return { ...DEFAULT_APP_SETTINGS };
+        return parsed.data;
+      } catch {
+        return { ...DEFAULT_APP_SETTINGS };
+      }
     },
 
     setVpn: (v) => writeEncrypted("vpn", vpnSettingsSchema.parse(v)),
@@ -82,7 +118,16 @@ export function createSettingsService(db: Db, appSecretKey: string): SettingsSer
     setApp: (a) => writePlain("app", appSettingsSchema.parse(a)),
 
     isConfigured(): boolean {
-      return db.getSetting("vpn") !== null && db.getSetting("router") !== null;
+      return vpnRead().status === "ok" && routerRead().status === "ok";
+    },
+
+    getIssues(): SettingsIssues {
+      const vpn = vpnRead();
+      const router = routerRead();
+      const messages: string[] = [];
+      if (vpn.status === "invalid") messages.push(`VPN settings need re-save: ${vpn.error ?? "stale schema"}`);
+      if (router.status === "invalid") messages.push(`Router settings need re-save: ${router.error ?? "stale schema"}`);
+      return { vpn: vpn.status, router: router.status, messages };
     },
   };
 }
