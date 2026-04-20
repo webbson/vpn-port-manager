@@ -60,22 +60,24 @@ export function setupView(props: { issues?: string[] } = {}): string {
         <input id="router-password" name="password" type="password" autocomplete="new-password" />
       </div>
       <div class="info-box">
-        The three IDs below come from the UniFi UI. Open the UniFi NAT Rules
-        page, click Create, open browser DevTools → Network, and copy the
-        <code>in_interface</code>, <code>source.zone_id</code> and
-        <code>destination.zone_id</code> values from the outgoing request body.
+        Click <strong>Discover</strong> to pull interfaces + zones from UniFi.
+        Needs the host, username and password above first.
+      </div>
+      <div class="form-actions" style="margin-top:0;margin-bottom:14px;">
+        <button type="button" class="btn secondary" onclick="discoverRouter()">Discover from UniFi</button>
+        <span id="router-discover-result" class="muted"></span>
       </div>
       <div class="form-group">
-        <label for="router-inInterfaceId">VPN interface ID</label>
-        <input id="router-inInterfaceId" name="inInterfaceId" type="text" placeholder="655ca9ef64c8185504aaadd9" />
+        <label for="router-inInterfaceId">VPN interface</label>
+        <select id="router-inInterfaceId" name="inInterfaceId"><option value="">— run Discover first —</option></select>
       </div>
       <div class="form-group">
-        <label for="router-sourceZoneId">Firewall source zone ID</label>
-        <input id="router-sourceZoneId" name="sourceZoneId" type="text" placeholder="67b0806d66b7ef016bcefb31" />
+        <label for="router-sourceZoneId">Firewall source zone (where VPN traffic arrives)</label>
+        <select id="router-sourceZoneId" name="sourceZoneId"><option value="">— run Discover first —</option></select>
       </div>
       <div class="form-group">
-        <label for="router-destinationZoneId">Firewall destination zone ID</label>
-        <input id="router-destinationZoneId" name="destinationZoneId" type="text" placeholder="67b0806d66b7ef016bcefb30" />
+        <label for="router-destinationZoneId">Firewall destination zone (LAN target)</label>
+        <select id="router-destinationZoneId" name="destinationZoneId"><option value="">— run Discover first —</option></select>
       </div>
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveRouter()">Save router</button>
@@ -115,6 +117,36 @@ export function setupView(props: { issues?: string[] } = {}): string {
         const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json().catch(() => ({}));
         return { ok: res.ok, data };
+      }
+      async function discoverRouter() {
+        const host = document.getElementById('router-host').value.trim();
+        const username = document.getElementById('router-username').value.trim();
+        const password = document.getElementById('router-password').value;
+        show('router-discover-result', 'Discovering…', true);
+        const { data } = await postJson('/api/settings/router/discover', 'POST', {
+          type: 'unifi', host, username, password,
+        });
+        if (!data || !data.ok) {
+          show('router-discover-result', 'Failed: ' + (data && data.error ? JSON.stringify(data.error) : 'unknown'), false);
+          return;
+        }
+        populateSelect('router-inInterfaceId', data.interfaces || [], true);
+        populateSelect('router-sourceZoneId', data.zones || [], false);
+        populateSelect('router-destinationZoneId', data.zones || [], false);
+        show('router-discover-result', 'Loaded ' + (data.interfaces ? data.interfaces.length : 0) + ' interfaces, ' + (data.zones ? data.zones.length : 0) + ' zones.', true);
+      }
+      function populateSelect(id, items, isInterface) {
+        const sel = document.getElementById(id);
+        sel.innerHTML = '';
+        for (const it of items) {
+          const opt = document.createElement('option');
+          opt.value = it.id;
+          const extra = isInterface
+            ? (it.purpose ? ' (' + it.purpose + ')' : '')
+            : (it.key ? ' (' + it.key + ')' : '');
+          opt.textContent = it.name + extra + ' — ' + it.id;
+          sel.appendChild(opt);
+        }
       }
       const saved = { vpn: false, router: false };
       function maybeDone() {

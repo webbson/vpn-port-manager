@@ -88,22 +88,31 @@ export function settingsView(props: SettingsViewProps): string {
         <input id="router-password" name="password" type="password" placeholder="${routerConfigured ? "•••••• (stored, leave blank to keep)" : ""}" autocomplete="new-password" />
       </div>
       <div class="info-box">
-        The three IDs below come from the UniFi UI. Create a test NAT rule +
-        firewall policy in the UniFi UI while DevTools → Network is open, then
-        copy <code>in_interface</code>, <code>source.zone_id</code>, and
-        <code>destination.zone_id</code> from the outgoing request body.
+        Click <strong>Discover</strong> to populate the dropdowns below
+        directly from your UniFi controller. Requires host, username and
+        password above — password can be blank if already saved.
+      </div>
+      <div class="form-actions" style="margin-top:0;margin-bottom:14px;">
+        <button type="button" class="btn secondary" onclick="discoverRouter()">Discover from UniFi</button>
+        <span id="router-discover-result" class="muted"></span>
       </div>
       <div class="form-group">
-        <label for="router-inInterfaceId">VPN interface ID (NAT <code>in_interface</code>)</label>
-        <input id="router-inInterfaceId" name="inInterfaceId" type="text" value="${escHtml(routerInIface)}" placeholder="655ca9ef64c8185504aaadd9" />
+        <label for="router-inInterfaceId">VPN interface (NAT <code>in_interface</code>)</label>
+        <select id="router-inInterfaceId" name="inInterfaceId">
+          <option value="${escHtml(routerInIface)}">${routerInIface ? escHtml(routerInIface) + " (saved)" : "— none —"}</option>
+        </select>
       </div>
       <div class="form-group">
-        <label for="router-sourceZoneId">Firewall source zone ID (e.g. External/VPN)</label>
-        <input id="router-sourceZoneId" name="sourceZoneId" type="text" value="${escHtml(routerSrcZone)}" placeholder="67b0806d66b7ef016bcefb31" />
+        <label for="router-sourceZoneId">Firewall source zone (where VPN traffic arrives)</label>
+        <select id="router-sourceZoneId" name="sourceZoneId">
+          <option value="${escHtml(routerSrcZone)}">${routerSrcZone ? escHtml(routerSrcZone) + " (saved)" : "— none —"}</option>
+        </select>
       </div>
       <div class="form-group">
-        <label for="router-destinationZoneId">Firewall destination zone ID (e.g. Internal/LAN)</label>
-        <input id="router-destinationZoneId" name="destinationZoneId" type="text" value="${escHtml(routerDstZone)}" placeholder="67b0806d66b7ef016bcefb30" />
+        <label for="router-destinationZoneId">Firewall destination zone (LAN target)</label>
+        <select id="router-destinationZoneId" name="destinationZoneId">
+          <option value="${escHtml(routerDstZone)}">${routerDstZone ? escHtml(routerDstZone) + " (saved)" : "— none —"}</option>
+        </select>
       </div>
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveRouter()">Save</button>
@@ -180,6 +189,47 @@ function settingsScript(args: {
       });
       const data = await res.json().catch(() => ({}));
       return { ok: res.ok, status: res.status, data };
+    }
+    async function discoverRouter() {
+      const host = document.getElementById('router-host').value.trim();
+      const username = document.getElementById('router-username').value.trim();
+      const password = document.getElementById('router-password').value;
+      show('router-discover-result', 'Discovering…', true);
+      const { data } = await postJson('/api/settings/router/discover', 'POST', {
+        type: 'unifi', host, username, password,
+      });
+      if (!data || !data.ok) {
+        show('router-discover-result', 'Failed: ' + (data && data.error ? JSON.stringify(data.error) : 'unknown'), false);
+        return;
+      }
+      populateInterfaceSelect(data.interfaces || []);
+      populateZoneSelect('router-sourceZoneId', data.zones || []);
+      populateZoneSelect('router-destinationZoneId', data.zones || []);
+      show('router-discover-result', 'Loaded ' + (data.interfaces ? data.interfaces.length : 0) + ' interfaces, ' + (data.zones ? data.zones.length : 0) + ' zones.', true);
+    }
+    function populateInterfaceSelect(interfaces) {
+      const sel = document.getElementById('router-inInterfaceId');
+      const prev = sel.value;
+      sel.innerHTML = '';
+      for (const iface of interfaces) {
+        const opt = document.createElement('option');
+        opt.value = iface.id;
+        opt.textContent = iface.name + (iface.purpose ? ' (' + iface.purpose + ')' : '') + ' — ' + iface.id;
+        if (iface.id === prev) opt.selected = true;
+        sel.appendChild(opt);
+      }
+    }
+    function populateZoneSelect(id, zones) {
+      const sel = document.getElementById(id);
+      const prev = sel.value;
+      sel.innerHTML = '';
+      for (const zone of zones) {
+        const opt = document.createElement('option');
+        opt.value = zone.id;
+        opt.textContent = zone.name + (zone.key ? ' (' + zone.key + ')' : '') + ' — ' + zone.id;
+        if (zone.id === prev) opt.selected = true;
+        sel.appendChild(opt);
+      }
     }
     async function saveVpn() {
       try {
