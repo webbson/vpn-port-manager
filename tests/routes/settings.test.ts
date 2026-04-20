@@ -20,10 +20,12 @@ function fakeRuntime(overrides: Partial<Runtime> = {}): Runtime {
     getProvider: () => { throw new Error("stub"); },
     getRouter: () => { throw new Error("stub"); },
     getMaxPorts: () => 0,
+    getNotifier: () => ({ emit: () => {} }),
     isReady: () => true,
     reloadVpn: vi.fn(),
     reloadRouter: vi.fn(),
     reloadApp: vi.fn(),
+    reloadNotifications: vi.fn(),
     stop: vi.fn(),
     ...overrides,
   };

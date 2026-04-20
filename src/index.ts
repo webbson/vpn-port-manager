@@ -29,6 +29,7 @@ app.get("/settings", (c) => {
         vpn: settings.getVpn(),
         router: settings.getRouter(),
         app: settings.getApp(),
+        notifications: settings.getNotifications(),
         issues: settings.getIssues().messages,
       })
     )

@@ -5,12 +5,15 @@ import { createHookRunner } from "./hooks/runner.js";
 import { fireHooksForMapping, buildHookPayload, type HookPayloadBase } from "./hooks/fire.js";
 import type { HookPayload } from "./hooks/types.js";
 import type { PortMapping } from "./db.js";
+import type { NotifierDispatcher } from "./notifications/dispatcher.js";
+import { createNoopDispatcher } from "./notifications/dispatcher.js";
 
 export interface SyncConfig {
   db: Db;
   provider: VpnProvider;
   router: RouterClient;
   renewThresholdDays: number;
+  notifier?: NotifierDispatcher;
 }
 
 export interface SyncWatchdog {
@@ -36,6 +39,7 @@ function specFromMapping(m: PortMapping): PortForwardSpec {
 
 export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   const { db, provider, router, renewThresholdDays } = config;
+  const notifier: NotifierDispatcher = config.notifier ?? createNoopDispatcher();
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -70,6 +74,15 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         db.logSync("expired", mapping.id, {
           reason: "port_expired",
           vpnPort: mapping.vpnPort,
+        });
+
+        notifier.emit({
+          category: "port.expired",
+          severity: "warning",
+          title: "VPN port expired",
+          message: `Port ${mapping.vpnPort} on "${mapping.label}" has expired and was removed from the router.`,
+          mappingId: mapping.id,
+          data: { vpnPort: mapping.vpnPort },
         });
         continue;
       }
@@ -112,6 +125,15 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           newPort,
           newExpiresAt,
         });
+
+        notifier.emit({
+          category: "port.recreated",
+          severity: "info",
+          title: "VPN port recreated",
+          message: `"${mapping.label}" port changed from ${oldPort} to ${newPort}.`,
+          mappingId: mapping.id,
+          data: { oldPort, newPort, newExpiresAt },
+        });
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         db.updateMapping(mapping.id, { status: "error" });
@@ -119,6 +141,15 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           reason: "port_recreate_failed",
           vpnPort: oldPort,
           error: message,
+        });
+
+        notifier.emit({
+          category: "port.recreate_failed",
+          severity: "error",
+          title: "VPN port recreate failed",
+          message: `"${mapping.label}" (port ${oldPort}) missing from provider; recreate attempt failed: ${message}`,
+          mappingId: mapping.id,
+          data: { vpnPort: oldPort, error: message },
         });
       }
     }
@@ -172,6 +203,17 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           newPort,
           newExpiresAt,
         });
+
+        notifier.emit({
+          category: "port.renewed",
+          severity: "info",
+          title: "VPN port renewed",
+          message: newPort === oldPort
+            ? `"${mapping.label}" renewed; port ${newPort} kept.`
+            : `"${mapping.label}" renewed; port changed from ${oldPort} to ${newPort}.`,
+          mappingId: mapping.id,
+          data: { oldPort, newPort, newExpiresAt },
+        });
       }
     }
   }
@@ -195,6 +237,15 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         db.logSync("error", mapping.id, {
           step: "router_repair",
           error: message,
+        });
+
+        notifier.emit({
+          category: "router.repair_failed",
+          severity: "error",
+          title: "Router rule repair failed",
+          message: `Could not repair router rules for "${mapping.label}": ${message}`,
+          mappingId: mapping.id,
+          data: { error: message },
         });
       }
     }
@@ -251,6 +302,13 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`[sync] Router login failed: ${message}`);
         db.logSync("error", null, { step: "login", error: message });
+        notifier.emit({
+          category: "provider.login_failed",
+          severity: "error",
+          title: "Router login failed",
+          message: `Sync watchdog could not log in to the router: ${message}`,
+          data: { error: message },
+        });
         return;
       }
 

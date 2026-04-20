@@ -13,10 +13,12 @@ function fakeRuntime(provider: VpnProvider, router: RouterClient, maxPorts?: num
     getProvider: () => provider,
     getRouter: () => router,
     getMaxPorts: () => maxPorts ?? provider.maxPorts,
+    getNotifier: () => ({ emit: () => {} }),
     isReady: () => true,
     reloadVpn: () => {},
     reloadRouter: () => {},
     reloadApp: () => {},
+    reloadNotifications: () => {},
     stop: () => {},
   };
 }

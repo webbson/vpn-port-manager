@@ -5,15 +5,23 @@ import type { RouterClient } from "./routers/types.js";
 import { createProvider } from "./providers/index.js";
 import { createRouter } from "./routers/index.js";
 import { createSyncWatchdog, type SyncWatchdog } from "./sync.js";
+import { createNotifier } from "./notifications/index.js";
+import {
+  createNotifierDispatcher,
+  createNoopDispatcher,
+  type NotifierDispatcher,
+} from "./notifications/dispatcher.js";
 
 export interface Runtime {
   getProvider(): VpnProvider;
   getRouter(): RouterClient;
   getMaxPorts(): number;
+  getNotifier(): NotifierDispatcher;
   isReady(): boolean;
   reloadVpn(): void;
   reloadRouter(): void;
   reloadApp(): void;
+  reloadNotifications(): void;
   stop(): void;
 }
 
@@ -27,6 +35,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
   let provider: VpnProvider | null = null;
   let router: RouterClient | null = null;
   let watchdog: SyncWatchdog | null = null;
+  let dispatcher: NotifierDispatcher = createNoopDispatcher();
 
   function rebuildProvider(): void {
     const vpn = settings.getVpn();
@@ -36,6 +45,28 @@ export function createRuntime(config: RuntimeConfig): Runtime {
   function rebuildRouter(): void {
     const r = settings.getRouter();
     router = r ? createRouter(r) : null;
+  }
+
+  function rebuildNotifier(): void {
+    const n = settings.getNotifications();
+    if (!n.enabled || !n.notifier) {
+      dispatcher = createNoopDispatcher();
+      return;
+    }
+    try {
+      const notifier = createNotifier(n.notifier);
+      dispatcher = createNotifierDispatcher({
+        db,
+        notifier,
+        enabled: n.enabled,
+        categories: n.categories,
+      });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[runtime] notifier build failed: ${message}`);
+      dispatcher = createNoopDispatcher();
+      throw err;
+    }
   }
 
   function startOrRestartWatchdog(): void {
@@ -48,6 +79,7 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       provider,
       router,
       renewThresholdDays: app.renewThresholdDays,
+      notifier: dispatcher,
     });
     watchdog.start(app.syncIntervalMinutes * 60_000);
     watchdog.runOnce().catch((err: unknown) => {
@@ -58,6 +90,12 @@ export function createRuntime(config: RuntimeConfig): Runtime {
 
   rebuildProvider();
   rebuildRouter();
+  try {
+    rebuildNotifier();
+  } catch {
+    // Bad stored notifier settings shouldn't prevent boot — runtime stays
+    // usable with a no-op dispatcher. User will see the issue in /settings.
+  }
   startOrRestartWatchdog();
 
   return {
@@ -74,6 +112,9 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       if (app.maxPorts) return app.maxPorts;
       return provider ? provider.maxPorts : 0;
     },
+    getNotifier(): NotifierDispatcher {
+      return dispatcher;
+    },
     isReady(): boolean {
       return provider !== null && router !== null;
     },
@@ -86,6 +127,12 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       startOrRestartWatchdog();
     },
     reloadApp(): void {
+      startOrRestartWatchdog();
+    },
+    reloadNotifications(): void {
+      rebuildNotifier();
+      // Watchdog captures the dispatcher reference at construction time, so we
+      // need to rebuild it to pick up the new one.
       startOrRestartWatchdog();
     },
     stop(): void {

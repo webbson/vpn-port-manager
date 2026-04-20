@@ -185,6 +185,14 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Router error creating rules for ${mappingId}: ${msg}`);
       db.updateMapping(mappingId, { status: 'error' });
+      runtime.getNotifier().emit({
+        category: 'mapping.create_failed',
+        severity: 'error',
+        title: 'Router rule create failed',
+        message: `Created VPN port ${providerPort.port} for "${resolvedLabel}" but the router rule could not be created: ${msg}`,
+        mappingId,
+        data: { vpnPort: providerPort.port, error: msg },
+      });
     }
 
     for (const h of hooks) {
@@ -255,6 +263,14 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`Router error updating rules for ${id}: ${msg}`);
+        runtime.getNotifier().emit({
+          category: 'mapping.update_failed',
+          severity: 'error',
+          title: 'Router rule update failed',
+          message: `Could not update router rules for "${updated.label}": ${msg}`,
+          mappingId: id,
+          data: { error: msg },
+        });
       }
     }
 
@@ -312,11 +328,13 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       destPort: mapping.destPort,
     });
 
+    const deleteErrors: string[] = [];
     try {
       await provider.deletePort(mapping.vpnPort);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Provider error deleting port ${mapping.vpnPort}: ${msg}`);
+      deleteErrors.push(`provider: ${msg}`);
     }
 
     try {
@@ -324,6 +342,18 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Router error deleting rules for ${id}: ${msg}`);
+      deleteErrors.push(`router: ${msg}`);
+    }
+
+    if (deleteErrors.length > 0) {
+      runtime.getNotifier().emit({
+        category: 'mapping.delete_failed',
+        severity: 'warning',
+        title: 'Mapping delete had errors',
+        message: `Deleting "${mapping.label}" (port ${mapping.vpnPort}) reported: ${deleteErrors.join('; ')}. The mapping has been removed from the database.`,
+        mappingId: id,
+        data: { errors: deleteErrors, vpnPort: mapping.vpnPort },
+      });
     }
 
     db.deleteMapping(id);

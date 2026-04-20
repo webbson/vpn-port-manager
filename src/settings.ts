@@ -3,10 +3,16 @@ import { encrypt, decrypt } from "./crypto.js";
 import type { Db } from "./db.js";
 import { vpnSettingsSchema } from "./providers/registry.js";
 import { routerSettingsSchema } from "./routers/registry.js";
+import {
+  notificationsSettingsSchema,
+  DEFAULT_NOTIFICATIONS_SETTINGS,
+  type NotificationsSettings,
+} from "./notifications/schema.js";
 
-export { vpnSettingsSchema, routerSettingsSchema };
+export { vpnSettingsSchema, routerSettingsSchema, notificationsSettingsSchema };
 export type VpnSettings = z.infer<typeof vpnSettingsSchema>;
 export type RouterSettings = z.infer<typeof routerSettingsSchema>;
+export type { NotificationsSettings };
 
 export const appSettingsSchema = z.object({
   maxPorts: z.number().int().positive().nullable(),
@@ -51,9 +57,11 @@ export interface SettingsService {
   getVpn(): VpnSettings | null;
   getRouter(): RouterSettings | null;
   getApp(): AppSettings;
+  getNotifications(): NotificationsSettings;
   setVpn(v: VpnSettings): void;
   setRouter(r: RouterSettings): void;
   setApp(a: AppSettings): void;
+  setNotifications(n: NotificationsSettings): void;
   isConfigured(): boolean;
   getIssues(): SettingsIssues;
 }
@@ -120,9 +128,23 @@ export function createSettingsService(db: Db, appSecretKey: string): SettingsSer
       }
     },
 
+    getNotifications(): NotificationsSettings {
+      const row = db.getSetting("notifications");
+      if (!row) return { ...DEFAULT_NOTIFICATIONS_SETTINGS };
+      try {
+        const raw = row.encrypted ? decrypt(row.valueJson, appSecretKey) : row.valueJson;
+        const parsed = notificationsSettingsSchema.safeParse(JSON.parse(raw));
+        if (!parsed.success) return { ...DEFAULT_NOTIFICATIONS_SETTINGS };
+        return parsed.data;
+      } catch {
+        return { ...DEFAULT_NOTIFICATIONS_SETTINGS };
+      }
+    },
+
     setVpn: (v) => writeEncrypted("vpn", vpnSettingsSchema.parse(v)),
     setRouter: (r) => writeEncrypted("router", routerSettingsSchema.parse(r)),
     setApp: (a) => writePlain("app", appSettingsSchema.parse(a)),
+    setNotifications: (n) => writeEncrypted("notifications", notificationsSettingsSchema.parse(n)),
 
     isConfigured(): boolean {
       return vpnRead().status === "ok" && routerRead().status === "ok";

@@ -16,14 +16,14 @@ docker compose up -d   # Run in Docker (reads APP_SECRET_KEY from .env)
 
 ## Architecture
 
-Five-layer system managing VPN port forwardings and the router rules that expose them on the LAN:
+Six-layer system managing VPN port forwardings and the router rules that expose them on the LAN:
 
 ```
 Provider Layer → State Layer (SQLite) → Router Layer → Hook Layer
-   (Azire)         (source of truth)    (UniFi, …)    (Plex, webhooks, commands)
-                         ▲
-                   Settings Layer
-             (encrypted in-app config)
+   (Azire)         (source of truth)    (UniFi, …)    (Plex, webhooks)
+                         ▲                                   │
+                   Settings Layer                  Notification Layer
+             (encrypted in-app config)              (ntfy, …; app-global)
 ```
 
 **Hybrid action model:** User actions (create/delete/update mapping) execute immediately through the API. A sync watchdog runs on a timer as a safety net — it detects drift, auto-renews expiring ports, re-creates missing router rules, and retries failed hooks.
@@ -46,6 +46,9 @@ SQLite via better-sqlite3. Four tables: `port_mappings`, `hooks`, `sync_log`, `s
 Two hook types, all receiving `HookPayload` with old/new port info:
 - **Plugin:** Built-in integrations (Plex in `plugins/plex.ts`). Register new plugins in the `plugins` map in `runner.ts`.
 - **Webhook:** HTTP request to a URL. POST/PUT send the payload as a JSON body; GET appends it as query parameters. Custom headers optional.
+
+### Notification Layer (`src/notifications/`)
+App-global status notifications for system-wide events (sync failures, renewals, router repair errors, user-action failures). Registered-definition pattern mirroring `providers/` and `routers/` — each backend lives under `src/notifications/{id}/`, currently only ntfy. The `NotifierDispatcher` (`src/notifications/dispatcher.ts`) wraps the live `Notifier`, filters by per-category toggle (unknown categories default to ON), and is **fire-and-forget, non-throwing** — failures are written to `sync_log` with `action = "notify"` and never propagate into sync ticks or HTTP responses. Settings stored encrypted as `settings.notifications`. Event fire sites: `src/sync.ts` (5 call sites) and `src/routes/{api,ui}.ts` (mapping create/update/delete failures).
 
 ### Sync Watchdog (`src/sync.ts`)
 Periodic background job: provider sync check → renewal check → router rule repair → failed hook retry. Interval is `AppSettings.syncIntervalMinutes` (stored in the `settings` table, default 15 min). Rule repair calls `router.repairPortForward(handle, spec)` which re-creates any missing underlying rules and returns a possibly-updated handle.
@@ -101,6 +104,21 @@ See [`docs/hooks.md`](docs/hooks.md) for the full walkthrough, the three hook ty
 1. Create `src/hooks/plugins/{name}.ts` implementing `HookPlugin` from `types.ts`.
 2. Register in the `plugins` map in `src/hooks/runner.ts`.
 3. Add tests in `tests/hooks/plugins/{name}.test.ts`.
+
+## Adding a New Notification Backend
+
+See [`docs/notifications.md`](docs/notifications.md) for the full walkthrough, the event model, and the `Notifier` contract. Quick reference:
+
+Each backend is self-contained under `src/notifications/{id}/`:
+
+1. Create `src/notifications/{id}/client.ts` — implement `Notifier` from `../types.ts` (`send(event)` + `test()`).
+2. Create `src/notifications/{id}/schema.ts` — zod schema with `provider: z.literal("{id}")`, `Settings` type, and `describeStored(s)` that redacts any secrets.
+3. Create `src/notifications/{id}/view.ts` — `renderFields(stored)` HTML fragment and `readerScript` that defines `read{Id}Form(opts)` in the browser.
+4. Create `src/notifications/{id}/index.ts` — export a `NotifierDefinition` wiring the above.
+5. Register it in `src/notifications/registry.ts` by adding it to `notifierDefinitions`. Once two backends exist, switch `notifierSettingsSchema` to `z.discriminatedUnion("provider", [...])`.
+6. Add tests in `tests/notifications/{id}.test.ts`.
+
+No changes to views, routes, or the dispatcher are needed — they iterate the registry.
 
 ## Environment Variables
 

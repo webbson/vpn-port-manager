@@ -3,6 +3,7 @@ import {
   appSettingsSchema,
   routerSettingsSchema,
   vpnSettingsSchema,
+  notificationsSettingsSchema,
   type SettingsService,
   type VpnSettings,
 } from "../settings.js";
@@ -11,6 +12,8 @@ import { createProvider } from "../providers/index.js";
 import { createRouter } from "../routers/index.js";
 import { getProviderDefinition } from "../providers/registry.js";
 import { getRouterDefinition } from "../routers/registry.js";
+import { getNotifierDefinition } from "../notifications/registry.js";
+import { createNotifier } from "../notifications/index.js";
 import type { Runtime } from "../runtime.js";
 
 export interface SettingsRoutesConfig {
@@ -118,6 +121,66 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
       return c.json({ ok: true, restartRequired: true, reloadError: reload.error });
     }
     return c.json({ ok: true, restartRequired: false });
+  });
+
+  app.get("/notifications", (c) => {
+    const n = settings.getNotifications();
+    let notifier: Record<string, unknown> | null = null;
+    if (n.notifier) {
+      const def = getNotifierDefinition((n.notifier as { provider: string }).provider);
+      notifier = def ? def.describeStored(n.notifier) : null;
+    }
+    return c.json({
+      enabled: n.enabled,
+      notifier,
+      categories: n.categories,
+    });
+  });
+
+  app.put("/notifications", async (c) => {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    // Preserve the stored bearer token when the user leaves the field blank.
+    // Without this, editing any other ntfy field (topic, priority, …) would
+    // silently drop the token since the reader omits blank secrets.
+    const incomingNotifier = body.notifier as Record<string, unknown> | null | undefined;
+    if (
+      incomingNotifier &&
+      incomingNotifier.provider === "ntfy" &&
+      !incomingNotifier.bearerToken
+    ) {
+      const stored = settings.getNotifications().notifier as
+        | { provider?: string; bearerToken?: string }
+        | null;
+      if (stored?.provider === "ntfy" && stored.bearerToken) {
+        incomingNotifier.bearerToken = stored.bearerToken;
+      }
+    }
+    const parsed = notificationsSettingsSchema.safeParse(body);
+    if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
+    settings.setNotifications(parsed.data);
+    if (!runtime) return c.json({ ok: true, restartRequired: true });
+    const reload = tryReload(() => runtime.reloadNotifications());
+    if (!reload.ok) {
+      return c.json({ ok: true, restartRequired: true, reloadError: reload.error });
+    }
+    return c.json({ ok: true, restartRequired: false });
+  });
+
+  app.post("/notifications/test", async (c) => {
+    const body = (await c.req.json()) as Record<string, unknown>;
+    const notifierBody = body.notifier ?? body;
+    const def = getNotifierDefinition((notifierBody as { provider?: string }).provider ?? "");
+    if (!def) return c.json({ ok: false, error: "invalid notifier" }, 400);
+    const parsed = def.schema.safeParse(notifierBody);
+    if (!parsed.success) return c.json({ ok: false, error: "invalid body" }, 400);
+    try {
+      const notifier = createNotifier(parsed.data as never);
+      await notifier.test();
+      return c.json({ ok: true });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ ok: false, error: message });
+    }
   });
 
   return app;
