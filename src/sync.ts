@@ -2,6 +2,7 @@ import type { Db, RouterHandle } from "./db.js";
 import type { VpnProvider } from "./providers/types.js";
 import type { PortForwardSpec, Protocol, RouterClient } from "./routers/types.js";
 import { createHookRunner } from "./hooks/runner.js";
+import { fireHooksForMapping } from "./hooks/fire.js";
 import type { HookPayload } from "./hooks/types.js";
 import type { PortMapping } from "./db.js";
 
@@ -39,28 +40,7 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
   async function fireHooks(mapping: PortMapping, payload: HookPayload): Promise<void> {
-    const hooks = db.listHooks(mapping.id);
-    for (const hook of hooks) {
-      try {
-        const result = await hookRunner.execute({ type: hook.type, config: hook.config }, payload);
-        db.updateHookStatus(hook.id, result.success ? "ok" : "error", result.error);
-        db.logSync("hook_fire", mapping.id, {
-          hookId: hook.id,
-          type: hook.type,
-          status: result.success ? "ok" : "error",
-          error: result.error ?? null,
-        });
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        db.updateHookStatus(hook.id, "error", message);
-        db.logSync("hook_fire", mapping.id, {
-          hookId: hook.id,
-          type: hook.type,
-          status: "error",
-          error: message,
-        });
-      }
-    }
+    await fireHooksForMapping(db, hookRunner, mapping.id, payload);
   }
 
   async function checkProviderSync(): Promise<void> {

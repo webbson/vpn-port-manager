@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Db, RouterHandle } from "../db.js";
 import type { PortForwardSpec, Protocol } from "../routers/types.js";
 import { createHookRunner } from "../hooks/runner.js";
+import { fireHooksForMapping } from "../hooks/fire.js";
 import type { HookPayload } from "../hooks/types.js";
 import { getExternalIp } from "../services/external-ip.js";
 import type { Runtime } from "../runtime.js";
@@ -72,14 +73,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   app.get("/health", (c) => c.json({ ok: true }));
 
   async function fireHooks(mappingId: string, payload: HookPayload): Promise<void> {
-    const hooks = db.listHooks(mappingId);
-    for (const hook of hooks) {
-      const result = await hookRunner.execute({ type: hook.type, config: hook.config }, payload);
-      db.updateHookStatus(hook.id, result.success ? "success" : "error", result.error);
-      if (!result.success) {
-        console.error(`Hook ${hook.id} failed: ${result.error}`);
-      }
-    }
+    await fireHooksForMapping(db, hookRunner, mappingId, payload);
   }
 
   app.get("/mappings", async (c) => {

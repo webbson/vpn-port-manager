@@ -10,6 +10,8 @@ import { logsView } from '../views/logs.js';
 import { parseHookForm } from '../views/hook-builder.js';
 import type { Runtime } from '../runtime.js';
 import { listDanglingPorts } from '../services/dangling-ports.js';
+import { createHookRunner } from '../hooks/runner.js';
+import { fireHooksForMapping } from '../hooks/fire.js';
 
 export interface UiRoutesConfig {
   db: Db;
@@ -39,6 +41,7 @@ function buildSpec(m: {
 
 export function createUiRoutes(config: UiRoutesConfig): Hono {
   const { db, runtime } = config;
+  const hookRunner = createHookRunner();
   const app = new Hono();
 
   app.get('/', async (c) => {
@@ -190,6 +193,16 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
 
     db.logSync('create', mappingId, { vpnPort: providerPort.port, label: resolvedLabel });
 
+    const created = db.getMapping(mappingId)!;
+    await fireHooksForMapping(db, hookRunner, mappingId, {
+      mappingId,
+      label: created.label,
+      oldPort: null,
+      newPort: created.vpnPort,
+      destIp: created.destIp,
+      destPort: created.destPort,
+    });
+
     return c.redirect('/');
   });
 
@@ -256,6 +269,29 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
 
     db.logSync('update', id, { label, destIp, destPort, protocol, hookCount: incomingHooks.length });
 
+    // Fire hooks that haven't run yet (new ones added via this edit) so the
+    // user doesn't have to wait for a port change or a sync retry to see the
+    // integration work. Existing hooks with a prior lastStatus aren't re-run
+    // here — avoid spamming Plex/webhooks on every label tweak.
+    const freshMapping = db.getMapping(id)!;
+    const neverRun = db.listHooks(id).filter((h) => h.lastStatus === null);
+    if (neverRun.length > 0) {
+      await fireHooksForMapping(
+        db,
+        hookRunner,
+        id,
+        {
+          mappingId: id,
+          label: freshMapping.label,
+          oldPort: null,
+          newPort: freshMapping.vpnPort,
+          destIp: freshMapping.destIp,
+          destPort: freshMapping.destPort,
+        },
+        { hookIds: new Set(neverRun.map((h) => h.id)) }
+      );
+    }
+
     return c.redirect('/');
   });
 
@@ -265,6 +301,16 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     const id = c.req.param('id');
     const mapping = db.getMapping(id);
     if (!mapping) return c.redirect('/');
+
+    // Fire hooks with newPort=null before the cascade delete wipes them.
+    await fireHooksForMapping(db, hookRunner, id, {
+      mappingId: id,
+      label: mapping.label,
+      oldPort: mapping.vpnPort,
+      newPort: null,
+      destIp: mapping.destIp,
+      destPort: mapping.destPort,
+    });
 
     try {
       await provider.deletePort(mapping.vpnPort);
@@ -284,6 +330,38 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     db.logSync('delete', id, { vpnPort: mapping.vpnPort, label: mapping.label });
 
     return c.redirect('/');
+  });
+
+  app.post('/hooks/:hookId/fire', async (c) => {
+    const hookId = c.req.param('hookId');
+    // Find the mapping that owns this hook. The hooks table doesn't have a
+    // direct "get by id" helper, so walk mappings — cheap at our scale.
+    let ownerMapping = null;
+    let hookBelongs = false;
+    for (const m of db.listMappings()) {
+      for (const h of db.listHooks(m.id)) {
+        if (h.id === hookId) { ownerMapping = m; hookBelongs = true; break; }
+      }
+      if (hookBelongs) break;
+    }
+    if (!ownerMapping) return c.redirect('/');
+
+    await fireHooksForMapping(
+      db,
+      hookRunner,
+      ownerMapping.id,
+      {
+        mappingId: ownerMapping.id,
+        label: ownerMapping.label,
+        oldPort: null,
+        newPort: ownerMapping.vpnPort,
+        destIp: ownerMapping.destIp,
+        destPort: ownerMapping.destPort,
+      },
+      { hookIds: new Set([hookId]) }
+    );
+
+    return c.redirect(`/edit/${ownerMapping.id}`);
   });
 
   app.post('/dangling/:port/release', async (c) => {

@@ -49,6 +49,53 @@ function urlEncode(body: Record<string, string>): string {
     .join("&");
 }
 
+describe("UI /create fires hooks immediately", () => {
+  it("fires configured hooks right after creating a mapping, not just via sync retry", async () => {
+    const db = createDb(":memory:");
+    const provider = mockProvider();
+    const router = mockRouter();
+    const app = new Hono();
+    app.route("/", createUiRoutes({ db, runtime: fakeRuntime(provider, router) }));
+    clearExternalIpCache();
+
+    const fetchSpy = vi.fn((url: string) => {
+      if (String(url).startsWith("http://plex.lan:32400/")) {
+        return Promise.resolve({ ok: true, status: 200, statusText: "OK",
+          json: () => Promise.resolve({}) } as unknown as Response);
+      }
+      return Promise.resolve({ ok: true, status: 200, statusText: "OK",
+        json: () => Promise.resolve({ ip: "203.0.113.1" }) } as unknown as Response);
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const body = urlEncode({
+      label: "Plex",
+      destIp: "10.13.37.5",
+      destPort: "32400",
+      protocol: "tcp",
+      "hooks[0][type]": "plex",
+      "hooks[0][host]": "http://plex.lan:32400",
+      "hooks[0][token]": "tok",
+    });
+    const res = await app.request("/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    expect(res.status).toBe(302);
+
+    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://plex.lan:32400/"));
+    expect(plexCall, "plex fetch was not issued on create").toBeTruthy();
+    expect(String(plexCall![0])).toContain("ManualPortMappingPort=60000");
+
+    const mappings = db.listMappings();
+    expect(mappings).toHaveLength(1);
+    const hooks = db.listHooks(mappings[0].id);
+    expect(hooks).toHaveLength(1);
+    expect(hooks[0].lastStatus).toBe("ok");
+  });
+});
+
 describe("UI /edit/:id hook editing", () => {
   let db: Db;
   let provider: VpnProvider;
@@ -139,6 +186,26 @@ describe("UI /edit/:id hook editing", () => {
     });
     expect(res.status).toBe(302);
     expect(db.listHooks(mappingId)).toEqual([]);
+  });
+
+  it("POST /hooks/:id/fire runs a single hook with the mapping's current port and records status", async () => {
+    const fetchSpy = vi.fn(() => Promise.resolve({
+      ok: true, status: 200, statusText: "OK",
+      json: () => Promise.resolve({}),
+    } as unknown as Response));
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const [hook] = db.listHooks(mappingId);
+    const res = await app.request(`/hooks/${hook.id}/fire`, { method: "POST" });
+    expect(res.status).toBe(302);
+
+    const plexCall = fetchSpy.mock.calls.find((c) => String(c[0]).startsWith("http://plex.lan:32400/"));
+    expect(plexCall, "plex fetch was not issued").toBeTruthy();
+    expect(String(plexCall![0])).toContain("ManualPortMappingPort=60000");
+    expect(String(plexCall![0])).toContain("X-Plex-Token=old");
+
+    const fresh = db.listHooks(mappingId)[0];
+    expect(fresh.lastStatus).toBe("ok");
   });
 
   it("POST with display-level type=plex is stored as {type:'plugin', config.plugin:'plex'}", async () => {
