@@ -1,9 +1,21 @@
 import { escHtml } from './layout.js';
 
-export function createView(maxPorts: number, currentCount: number): string {
-  const remaining = maxPorts - currentCount;
+export interface AdoptedPort {
+  port: number;
+  expiresAt: number;
+}
 
-  if (remaining <= 0) {
+export function createView(
+  maxPorts: number,
+  currentCount: number,
+  adoptedPort?: AdoptedPort
+): string {
+  const remaining = maxPorts - currentCount;
+  const isAdopt = !!adoptedPort;
+
+  // When adopting, the port already exists at the provider — no new slot is
+  // consumed, so don't block on a full slot count.
+  if (!isAdopt && remaining <= 0) {
     return `
       <div class="page-header">
         <h1>New Port Mapping</h1>
@@ -17,21 +29,34 @@ export function createView(maxPorts: number, currentCount: number): string {
       </div>`;
   }
 
+  const header = isAdopt
+    ? `<div class="info-box">
+         Adopting VPN port <span class="port-num">${escHtml(adoptedPort!.port)}</span> — a new port
+         will <strong>not</strong> be allocated at the provider.
+       </div>`
+    : `<div class="info-box">
+         <strong>${escHtml(remaining)}</strong> slot${remaining === 1 ? '' : 's'} remaining
+         (${escHtml(currentCount)} / ${escHtml(maxPorts)} used)
+       </div>`;
+
+  const adoptInput = isAdopt
+    ? `<input type="hidden" name="adoptPort" value="${escHtml(adoptedPort!.port)}" />`
+    : '';
+
   return `
     <div class="page-header">
-      <h1>New Port Mapping</h1>
+      <h1>${isAdopt ? 'Adopt VPN Port' : 'New Port Mapping'}</h1>
     </div>
 
-    <div class="info-box">
-      <strong>${escHtml(remaining)}</strong> slot${remaining === 1 ? '' : 's'} remaining
-      (${escHtml(currentCount)} / ${escHtml(maxPorts)} used)
-    </div>
+    ${header}
 
     <div class="card">
       <form method="POST" action="/create">
+        ${adoptInput}
         <div class="form-group">
           <label for="label">Label</label>
-          <input type="text" id="label" name="label" required placeholder="e.g. Home Server SSH" />
+          <input type="text" id="label" name="label" required
+                 placeholder="${isAdopt ? `e.g. port-${adoptedPort!.port}` : 'e.g. Home Server SSH'}" />
         </div>
 
         <div class="form-group">

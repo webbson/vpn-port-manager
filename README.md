@@ -123,6 +123,12 @@ pnpm test         # run tests
 pnpm build        # compile TypeScript
 ```
 
+### Extending
+
+- [`docs/providers.md`](docs/providers.md) — add a new VPN provider
+- [`docs/routers.md`](docs/routers.md) — add a new router integration
+- [`docs/hooks.md`](docs/hooks.md) — add a new hook plugin
+
 ## Tech Stack
 
 TypeScript, Hono, better-sqlite3, Node.js 22

@@ -4,8 +4,22 @@ import { createDb } from "../../src/db.js";
 import type { Db } from "../../src/db.js";
 import type { VpnProvider } from "../../src/providers/types.js";
 import type { RouterClient } from "../../src/routers/types.js";
+import type { Runtime } from "../../src/runtime.js";
 import { createApiRoutes } from "../../src/routes/api.js";
 import { clearExternalIpCache } from "../../src/services/external-ip.js";
+
+function fakeRuntime(provider: VpnProvider, router: RouterClient, maxPorts?: number): Runtime {
+  return {
+    getProvider: () => provider,
+    getRouter: () => router,
+    getMaxPorts: () => maxPorts ?? provider.maxPorts,
+    isReady: () => true,
+    reloadVpn: () => {},
+    reloadRouter: () => {},
+    reloadApp: () => {},
+    stop: () => {},
+  };
+}
 
 let portCounter = 60000;
 
@@ -52,7 +66,7 @@ describe("API routes", () => {
     provider = mockProvider();
     router = mockRouter();
     app = new Hono();
-    app.route("/api", createApiRoutes({ db, provider, router }));
+    app.route("/api", createApiRoutes({ db, runtime: fakeRuntime(provider, router) }));
     clearExternalIpCache();
     vi.stubGlobal(
       "fetch",
@@ -189,5 +203,48 @@ describe("API routes", () => {
     const body = (await res.json()) as { logs: { action: string }[] };
     expect(body.logs.length).toBeGreaterThan(0);
     expect(body.logs[0].action).toBe("create");
+  });
+
+  it("GET /api/ports/dangling returns provider ports not tracked in db", async () => {
+    (provider.listPorts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { port: 60000, expiresAt: 9999999999 },
+      { port: 60001, expiresAt: 9999999999 },
+    ]);
+    await app.request("/api/mappings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destIp: "192.168.1.10", destPort: 8080, label: "tracked" }),
+    });
+
+    const res = await app.request("/api/ports/dangling");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ports: { port: number }[] };
+    expect(body.ports.map((p) => p.port)).toEqual([60001]);
+  });
+
+  it("POST /api/ports/dangling/:port/release deletes the port via provider", async () => {
+    (provider.listPorts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { port: 60000, expiresAt: 9999999999 },
+    ]);
+
+    const res = await app.request("/api/ports/dangling/60000/release", { method: "POST" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    expect(provider.deletePort).toHaveBeenCalledWith(60000);
+  });
+
+  it("POST /api/ports/dangling/:port/release refuses when port is tracked", async () => {
+    (provider.listPorts as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { port: 60000, expiresAt: 9999999999 },
+    ]);
+    await app.request("/api/mappings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ destIp: "192.168.1.10", destPort: 8080, label: "tracked" }),
+    });
+
+    const res = await app.request("/api/ports/dangling/60000/release", { method: "POST" });
+    expect(res.status).toBe(404);
+    expect(provider.deletePort).not.toHaveBeenCalled();
   });
 });

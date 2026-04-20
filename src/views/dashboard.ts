@@ -17,15 +17,21 @@ export interface DashboardStatus {
 
 export type MappingWithHooks = PortMapping & { hooks: Hook[] };
 
-function formatExpiry(expiresAt: number): string {
-  const now = Date.now();
-  const diffMs = expiresAt - now;
+export interface DanglingPortRow {
+  port: number;
+  expiresAt: number;
+}
+
+// expiresAt is a unix timestamp in seconds (provider convention — see azire/client.ts).
+function formatExpiry(expiresAtSeconds: number): string {
+  const expiresMs = expiresAtSeconds * 1000;
+  const diffMs = expiresMs - Date.now();
   const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
 
   if (diffMs <= 0) return '<span class="muted">Expired</span>';
   if (diffDays < 90) return `${diffDays}d left`;
 
-  return new Date(expiresAt).toLocaleDateString('en-GB', {
+  return new Date(expiresMs).toLocaleDateString('en-GB', {
     day: 'numeric',
     month: 'short',
     year: 'numeric',
@@ -44,11 +50,19 @@ function badgeFor(status: string): string {
   return `<span class="badge ${cls}">${safe}</span>`;
 }
 
-function mappingRow(m: MappingWithHooks): string {
+function portCell(port: number, externalIp: string | null): string {
+  if (!externalIp) {
+    return `<span class="port-num">${escHtml(port)}</span>`;
+  }
+  const copy = `${externalIp}:${port}`;
+  return `<button type="button" class="port-copy port-num" data-copy="${escHtml(copy)}" title="Click to copy ${escHtml(copy)}">${escHtml(port)}</button>`;
+}
+
+function mappingRow(m: MappingWithHooks, externalIp: string | null): string {
   return `
     <tr>
       <td>${escHtml(m.label)}</td>
-      <td><span class="port-num">${escHtml(m.vpnPort)}</span></td>
+      <td>${portCell(m.vpnPort, externalIp)}</td>
       <td>${escHtml(m.destIp)}:<span class="port-num">${escHtml(m.destPort)}</span></td>
       <td>${escHtml(m.protocol)}</td>
       <td>${badgeFor(m.status)}</td>
@@ -66,7 +80,28 @@ function mappingRow(m: MappingWithHooks): string {
     </tr>`;
 }
 
-export function dashboardView(mappings: MappingWithHooks[], status: DashboardStatus): string {
+function danglingRow(p: DanglingPortRow): string {
+  return `
+    <tr>
+      <td><span class="port-num">${escHtml(p.port)}</span></td>
+      <td>${formatExpiry(p.expiresAt)}</td>
+      <td>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <a href="/create?adopt=${escHtml(p.port)}" class="btn secondary">Adopt</a>
+          <form method="POST" action="/dangling/${escHtml(p.port)}/release" style="margin:0;"
+                onsubmit="return confirm('Release port ${escHtml(p.port)} at the VPN provider? This cannot be undone.')">
+            <button type="submit" class="btn danger">Release</button>
+          </form>
+        </div>
+      </td>
+    </tr>`;
+}
+
+export function dashboardView(
+  mappings: MappingWithHooks[],
+  status: DashboardStatus,
+  danglingPorts: DanglingPortRow[] = []
+): string {
   const providerDot = status.provider.connected ? 'ok' : 'err';
   const providerLabel = status.provider.connected ? 'Connected' : 'Disconnected';
   const routerDot = status.router.connected ? 'ok' : 'err';
@@ -79,7 +114,27 @@ export function dashboardView(mappings: MappingWithHooks[], status: DashboardSta
           No port mappings yet. <a href="/create">Create one</a>
         </div>
        </td></tr>`
-    : mappings.map(mappingRow).join('');
+    : mappings.map((m) => mappingRow(m, status.externalIp)).join('');
+
+  const danglingSection = danglingPorts.length === 0 ? '' : `
+    <div class="table-wrap" style="margin-top:28px;">
+      <div class="table-header">
+        <h2>Dangling Ports</h2>
+        <span class="muted">${danglingPorts.length} at provider, not tracked here</span>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>VPN Port</th>
+            <th>Expires</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${danglingPorts.map(danglingRow).join('')}
+        </tbody>
+      </table>
+    </div>`;
 
   return `
     <div class="page-header">
@@ -137,5 +192,7 @@ export function dashboardView(mappings: MappingWithHooks[], status: DashboardSta
           ${tableBody}
         </tbody>
       </table>
-    </div>`;
+    </div>
+
+    ${danglingSection}`;
 }

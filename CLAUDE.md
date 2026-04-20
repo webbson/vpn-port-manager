@@ -63,9 +63,12 @@ Hono framework. REST API at `/api/*` (mappings, settings, status, logs) consumed
 - **Config validation:** zod everywhere — env-var boundary (`src/config.ts`), API bodies (`src/routes/*.ts`), stored settings on decrypt (`src/settings.ts`).
 - **Tests mock fetch globally:** `vi.stubGlobal("fetch", mockFetch)` is the pattern for HTTP-client tests. DB/settings tests use `:memory:` SQLite.
 - **Secrets never leave the server** — `GET /api/settings/vpn` and `GET /api/settings/router` redact `apiToken` and `password`; see `tests/routes/settings.test.ts` for the assertion.
-- **Save → restart:** every `PUT /api/settings/*` returns `{ ok: true, restartRequired: true }`. The UI flips a `localStorage.restartRequired` flag that the global layout uses to render a yellow banner; changes only take effect after a container restart.
+- **Hot-reloadable settings:** `PUT /api/settings/{vpn,router,app}` calls `runtime.reload*()` which rebuilds the provider/router and restarts the sync watchdog in place. Responses return `{ ok: true, restartRequired: false }` on success, or `{ ok: true, restartRequired: true, reloadError: "…" }` if the rebuild throws (bad creds, unreachable host). The yellow banner only shows on reload failure.
+- **Runtime registry:** `src/runtime.ts` is the single holder of the live provider/router/watchdog. Routes receive the `Runtime` and call `getProvider()` / `getRouter()` per request — never capture these in closures.
 
 ## Adding a New VPN Provider
+
+See [`docs/providers.md`](docs/providers.md) for the full walkthrough, contract, and verification steps. Quick reference:
 
 Each provider is self-contained under `src/providers/{id}/`:
 
@@ -80,6 +83,8 @@ No changes to views, routes, or the settings service are needed — they iterate
 
 ## Adding a New Router
 
+See [`docs/routers.md`](docs/routers.md) for the full walkthrough, handle semantics, and the six-method `RouterClient` contract. Quick reference:
+
 Each router is self-contained under `src/routers/{id}/`:
 
 1. Create `src/routers/{id}/client.ts` — implement `RouterClient` from `../types.ts`. Define an opaque handle shape holding the router-native identifiers.
@@ -91,6 +96,8 @@ Each router is self-contained under `src/routers/{id}/`:
 7. Add tests in `tests/routers/{id}.test.ts`.
 
 ## Adding a New Hook Plugin
+
+See [`docs/hooks.md`](docs/hooks.md) for the full walkthrough, the three hook types, retry semantics, and security notes. Quick reference:
 
 1. Create `src/hooks/plugins/{name}.ts` implementing `HookPlugin` from `types.ts`.
 2. Register in the `plugins` map in `src/hooks/runner.ts`.

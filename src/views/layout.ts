@@ -161,6 +161,16 @@ export function layout(title: string, content: string): string {
       font-weight: 600;
     }
 
+    button.port-copy {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      font-size: inherit;
+    }
+    button.port-copy:hover { text-decoration: underline; }
+    button.port-copy.copied { color: #3fb950; }
+
     .muted {
       color: #8b949e;
     }
@@ -392,8 +402,8 @@ export function layout(title: string, content: string): string {
 </head>
 <body>
   <div id="restart-banner" class="banner">
-    <span><strong>Configuration saved.</strong> Restart the container to apply the new settings.</span>
-    <button onclick="localStorage.removeItem('restartRequired');this.parentElement.classList.remove('show')">Dismiss</button>
+    <span id="restart-banner-msg"><strong>Configuration saved but live reload failed.</strong> Restart the container to apply the new settings.</span>
+    <button onclick="localStorage.removeItem('restartRequired');localStorage.removeItem('reloadError');this.parentElement.classList.remove('show')">Dismiss</button>
   </div>
   <nav>
     <a class="nav-brand" href="/">VPN Port Manager</a>
@@ -407,7 +417,50 @@ export function layout(title: string, content: string): string {
   </div>
   <script>
     if (localStorage.getItem('restartRequired') === '1') {
+      var err = localStorage.getItem('reloadError');
+      if (err) {
+        document.getElementById('restart-banner-msg').innerHTML =
+          '<strong>Live reload failed:</strong> ' + err.replace(/</g, '&lt;') +
+          '. Restart the container to apply the new settings.';
+      }
       document.getElementById('restart-banner').classList.add('show');
+    }
+
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest && e.target.closest('button.port-copy');
+      if (!btn) return;
+      var text = btn.dataset.copy || '';
+      if (!text) return;
+      var orig = btn.textContent;
+      var done = function () {
+        btn.classList.add('copied');
+        btn.textContent = 'Copied!';
+        setTimeout(function () {
+          btn.classList.remove('copied');
+          btn.textContent = orig;
+        }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(done).catch(function () {
+          fallbackCopy(text);
+          done();
+        });
+      } else {
+        fallbackCopy(text);
+        done();
+      }
+    });
+    function fallbackCopy(text) {
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (_) {}
     }
   </script>
 </body>

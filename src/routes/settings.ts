@@ -11,13 +11,25 @@ import { createProvider } from "../providers/index.js";
 import { createRouter } from "../routers/index.js";
 import { getProviderDefinition } from "../providers/registry.js";
 import { getRouterDefinition } from "../routers/registry.js";
+import type { Runtime } from "../runtime.js";
 
 export interface SettingsRoutesConfig {
   settings: SettingsService;
+  runtime?: Runtime;
+}
+
+function tryReload(fn: () => void): { ok: true } | { ok: false; error: string } {
+  try {
+    fn();
+    return { ok: true };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
+  }
 }
 
 export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
-  const { settings } = config;
+  const { settings, runtime } = config;
   const app = new Hono();
 
   app.get("/vpn", (c) => {
@@ -32,7 +44,12 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
     const parsed = vpnSettingsSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     settings.setVpn(parsed.data);
-    return c.json({ ok: true, restartRequired: true });
+    if (!runtime) return c.json({ ok: true, restartRequired: true });
+    const reload = tryReload(() => runtime.reloadVpn());
+    if (!reload.ok) {
+      return c.json({ ok: true, restartRequired: true, reloadError: reload.error });
+    }
+    return c.json({ ok: true, restartRequired: false });
   });
 
   app.post("/vpn/test", async (c) => {
@@ -53,7 +70,12 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
     const parsed = routerSettingsSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     settings.setRouter(parsed.data);
-    return c.json({ ok: true, restartRequired: true });
+    if (!runtime) return c.json({ ok: true, restartRequired: true });
+    const reload = tryReload(() => runtime.reloadRouter());
+    if (!reload.ok) {
+      return c.json({ ok: true, restartRequired: true, reloadError: reload.error });
+    }
+    return c.json({ ok: true, restartRequired: false });
   });
 
   app.post("/router/test", async (c) => {
@@ -90,7 +112,12 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
     const parsed = appSettingsSchema.safeParse(await c.req.json());
     if (!parsed.success) return c.json({ error: parsed.error.issues }, 400);
     settings.setApp(parsed.data);
-    return c.json({ ok: true, restartRequired: true });
+    if (!runtime) return c.json({ ok: true, restartRequired: true });
+    const reload = tryReload(() => runtime.reloadApp());
+    if (!reload.ok) {
+      return c.json({ ok: true, restartRequired: true, reloadError: reload.error });
+    }
+    return c.json({ ok: true, restartRequired: false });
   });
 
   return app;

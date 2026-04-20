@@ -3,9 +3,7 @@ import { Hono } from "hono";
 import { loadConfig } from "./config.js";
 import { createDb } from "./db.js";
 import { createSettingsService } from "./settings.js";
-import { createProvider } from "./providers/index.js";
-import { createRouter } from "./routers/index.js";
-import { createSyncWatchdog } from "./sync.js";
+import { createRuntime } from "./runtime.js";
 import { createApiRoutes } from "./routes/api.js";
 import { createUiRoutes } from "./routes/ui.js";
 import { createSettingsRoutes } from "./routes/settings.js";
@@ -16,11 +14,12 @@ import { settingsView } from "./views/settings.js";
 const config = loadConfig();
 const db = createDb(config.dbPath);
 const settings = createSettingsService(db, config.appSecretKey);
+const runtime = createRuntime({ db, settings });
 
 const app = new Hono();
 
-// Settings API is always mounted so the UI can configure a fresh install.
-app.route("/api/settings", createSettingsRoutes({ settings }));
+// Settings API + pages are always mounted so the UI works in setup mode.
+app.route("/api/settings", createSettingsRoutes({ settings, runtime }));
 
 app.get("/settings", (c) => {
   return c.html(
@@ -40,52 +39,36 @@ app.get("/setup", (c) =>
   c.html(layout("Setup", setupView({ issues: settings.getIssues().messages })))
 );
 
-let watchdog: ReturnType<typeof createSyncWatchdog> | null = null;
+// Gate the rest of the app: if VPN or router settings aren't usable, redirect
+// non-settings traffic to /setup (HTML) or 503 (API) until config is entered.
+app.use("*", async (c, next) => {
+  const path = new URL(c.req.url).pathname;
+  const isAlwaysOpen =
+    path.startsWith("/api/settings") || path === "/settings" || path === "/setup";
+  if (isAlwaysOpen) return next();
+  if (!runtime.isReady()) {
+    if (path.startsWith("/api/")) {
+      return c.json({ error: "not configured" }, 503);
+    }
+    return c.redirect("/setup");
+  }
+  return next();
+});
 
-if (settings.isConfigured()) {
-  const vpn = settings.getVpn()!;
-  const routerSettings = settings.getRouter()!;
+app.route("/api", createApiRoutes({ db, runtime }));
+app.route("/", createUiRoutes({ db, runtime }));
+
+if (runtime.isReady()) {
   const appSettings = settings.getApp();
-
-  const provider = createProvider(vpn);
-  const router = createRouter(routerSettings);
-  const effectiveMaxPorts = appSettings.maxPorts ?? provider.maxPorts;
-
-  app.route(
-    "/api",
-    createApiRoutes({ db, provider, router, maxPorts: effectiveMaxPorts })
-  );
-  app.route("/", createUiRoutes({ db, provider, router }));
-
-  watchdog = createSyncWatchdog({
-    db,
-    provider,
-    router,
-    renewThresholdDays: appSettings.renewThresholdDays,
-  });
-
-  watchdog.runOnce().catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error(`[startup] Initial sync failed: ${message}`);
-  });
-
-  watchdog.start(appSettings.syncIntervalMs);
-
+  const provider = runtime.getProvider();
+  const router = runtime.getRouter();
+  const routerSettings = settings.getRouter()!;
   console.log("VPN Port Manager starting (configured)");
   console.log(`  Port:          ${config.port}`);
-  console.log(`  Provider:      ${provider.name} (max ${effectiveMaxPorts} ports)`);
+  console.log(`  Provider:      ${provider.name} (max ${runtime.getMaxPorts()} ports)`);
   console.log(`  Router:        ${router.name} @ ${routerSettings.host}`);
   console.log(`  Sync interval: ${appSettings.syncIntervalMs}ms`);
 } else {
-  app.get("/", (c) => c.redirect("/setup"));
-  app.all("*", (c, next) => {
-    const path = new URL(c.req.url).pathname;
-    if (path.startsWith("/api/settings") || path === "/setup" || path === "/settings") {
-      return next();
-    }
-    return c.redirect("/setup");
-  });
-
   const issues = settings.getIssues();
   if (issues.messages.length > 0) {
     console.log("VPN Port Manager starting (setup mode — stored settings need re-entry)");
@@ -103,7 +86,7 @@ serve({ fetch: app.fetch, port: config.port }, (info) => {
 
 function shutdown(): void {
   console.log("Shutting down…");
-  watchdog?.stop();
+  runtime.stop();
   db.close();
   process.exit(0);
 }

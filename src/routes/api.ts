@@ -1,17 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { Db, RouterHandle } from "../db.js";
-import type { VpnProvider } from "../providers/types.js";
-import type { PortForwardSpec, Protocol, RouterClient } from "../routers/types.js";
+import type { PortForwardSpec, Protocol } from "../routers/types.js";
 import { createHookRunner } from "../hooks/runner.js";
 import type { HookPayload } from "../hooks/types.js";
 import { getExternalIp } from "../services/external-ip.js";
+import type { Runtime } from "../runtime.js";
+import { listDanglingPorts } from "../services/dangling-ports.js";
 
 export interface ApiRoutesConfig {
   db: Db;
-  provider: VpnProvider;
-  router: RouterClient;
-  maxPorts?: number;
+  runtime: Runtime;
 }
 
 const createMappingSchema = z.object({
@@ -66,8 +65,7 @@ function buildSpec(mapping: {
 }
 
 export function createApiRoutes(config: ApiRoutesConfig): Hono {
-  const { db, provider, router } = config;
-  const maxPorts = config.maxPorts ?? provider.maxPorts;
+  const { db, runtime } = config;
   const hookRunner = createHookRunner();
   const app = new Hono();
 
@@ -94,6 +92,9 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   });
 
   app.post("/mappings", async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
+    const maxPorts = runtime.getMaxPorts();
     const parsed = createMappingSchema.safeParse(await c.req.json());
     if (!parsed.success) {
       return c.json({ error: parsed.error.issues }, 400);
@@ -164,6 +165,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   });
 
   app.put("/mappings/:id", async (c) => {
+    const router = runtime.getRouter();
     const id = c.req.param("id");
     const parsed = updateMappingSchema.safeParse(await c.req.json());
     if (!parsed.success) {
@@ -219,6 +221,8 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   });
 
   app.delete("/mappings/:id", async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
     const id = c.req.param("id");
 
     const mapping = db.getMapping(id);
@@ -256,6 +260,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   });
 
   app.post("/mappings/:id/refresh", async (c) => {
+    const provider = runtime.getProvider();
     const id = c.req.param("id");
 
     const mapping = db.getMapping(id);
@@ -274,6 +279,9 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
   });
 
   app.get("/status", async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
+    const maxPorts = runtime.getMaxPorts();
     let providerConnected = false;
     let activePorts = 0;
 
@@ -314,6 +322,40 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
       },
       lastSync,
     });
+  });
+
+  app.get("/ports/dangling", async (c) => {
+    const provider = runtime.getProvider();
+    try {
+      const dangling = await listDanglingPorts(provider, db);
+      return c.json({ ports: dangling });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 502);
+    }
+  });
+
+  app.post("/ports/dangling/:port/release", async (c) => {
+    const provider = runtime.getProvider();
+    const portParam = parseInt(c.req.param("port"), 10);
+    if (!Number.isFinite(portParam) || portParam <= 0) {
+      return c.json({ error: "invalid port" }, 400);
+    }
+
+    const dangling = await listDanglingPorts(provider, db);
+    if (!dangling.some((p) => p.port === portParam)) {
+      return c.json({ error: "port is not dangling" }, 404);
+    }
+
+    try {
+      await provider.deletePort(portParam);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 502);
+    }
+
+    db.logSync("dangling_release", null, { vpnPort: portParam });
+    return c.json({ ok: true });
   });
 
   app.get("/logs", async (c) => {

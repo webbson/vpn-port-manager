@@ -32,7 +32,8 @@ export function settingsView(props: SettingsViewProps): string {
       : ""}
 
     <div class="info-box">
-      Saving any section below requires a <strong>container restart</strong> to take effect.
+      Changes take effect immediately. If a live reload fails, a yellow banner
+      will ask you to restart the container.
     </div>
 
     <h2 class="section-title">VPN provider</h2>
@@ -136,9 +137,28 @@ function dispatchScript(props: SettingsViewProps): string {
       el.textContent = msg;
       el.style.color = ok ? '#3fb950' : '#f85149';
     }
-    function markRestart() {
-      localStorage.setItem('restartRequired', '1');
-      document.getElementById('restart-banner').classList.add('show');
+    function handleSaveResult(data) {
+      if (data && data.restartRequired) {
+        localStorage.setItem('restartRequired', '1');
+        if (data.reloadError) {
+          localStorage.setItem('reloadError', String(data.reloadError));
+        } else {
+          localStorage.removeItem('reloadError');
+        }
+        var banner = document.getElementById('restart-banner');
+        var msg = document.getElementById('restart-banner-msg');
+        if (data.reloadError && msg) {
+          msg.innerHTML = '<strong>Live reload failed:</strong> ' +
+            String(data.reloadError).replace(/</g, '&lt;') +
+            '. Restart the container to apply the new settings.';
+        }
+        if (banner) banner.classList.add('show');
+      } else {
+        localStorage.removeItem('restartRequired');
+        localStorage.removeItem('reloadError');
+        var b = document.getElementById('restart-banner');
+        if (b) b.classList.remove('show');
+      }
     }
     function onVpnProviderChange() {
       const id = document.getElementById('vpn-provider').value;
@@ -173,8 +193,10 @@ function dispatchScript(props: SettingsViewProps): string {
       try {
         const body = readVpn({ requireSecret: ${!vpnConfigured} });
         const { ok, data } = await postJson('/api/settings/vpn', 'PUT', body);
-        if (ok) { show('vpn-result', 'Saved.', true); markRestart(); }
-        else show('vpn-result', 'Save failed: ' + JSON.stringify(data), false);
+        if (ok) {
+          show('vpn-result', data && data.reloadError ? 'Saved — restart required.' : 'Saved.', true);
+          handleSaveResult(data);
+        } else show('vpn-result', 'Save failed: ' + JSON.stringify(data), false);
       } catch (e) { show('vpn-result', e.message, false); }
     }
     async function testVpn() {
@@ -189,8 +211,10 @@ function dispatchScript(props: SettingsViewProps): string {
       try {
         const body = readRouter({ requireSecret: ${!routerConfigured} });
         const { ok, data } = await postJson('/api/settings/router', 'PUT', body);
-        if (ok) { show('router-result', 'Saved.', true); markRestart(); }
-        else show('router-result', 'Save failed: ' + JSON.stringify(data), false);
+        if (ok) {
+          show('router-result', data && data.reloadError ? 'Saved — restart required.' : 'Saved.', true);
+          handleSaveResult(data);
+        } else show('router-result', 'Save failed: ' + JSON.stringify(data), false);
       } catch (e) { show('router-result', e.message, false); }
     }
     async function testRouter() {
@@ -209,8 +233,10 @@ function dispatchScript(props: SettingsViewProps): string {
         renewThresholdDays: Number(document.getElementById('app-renewDays').value),
       };
       const { ok, data } = await postJson('/api/settings/app', 'PUT', body);
-      if (ok) { show('app-result', 'Saved.', true); markRestart(); }
-      else show('app-result', 'Save failed: ' + JSON.stringify(data), false);
+      if (ok) {
+        show('app-result', data && data.reloadError ? 'Saved — restart required.' : 'Saved.', true);
+        handleSaveResult(data);
+      } else show('app-result', 'Save failed: ' + JSON.stringify(data), false);
     }
   `;
 }

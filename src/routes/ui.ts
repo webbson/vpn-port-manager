@@ -1,18 +1,18 @@
 import { Hono } from 'hono';
 import type { Db, RouterHandle } from '../db.js';
-import type { VpnProvider } from '../providers/types.js';
-import type { PortForwardSpec, Protocol, RouterClient } from '../routers/types.js';
+import type { PortForwardSpec, Protocol } from '../routers/types.js';
 import { layout } from '../views/layout.js';
 import { dashboardView, type MappingWithHooks, type DashboardStatus } from '../views/dashboard.js';
 import { getExternalIp } from '../services/external-ip.js';
 import { createView } from '../views/create.js';
 import { editView } from '../views/edit.js';
 import { logsView } from '../views/logs.js';
+import type { Runtime } from '../runtime.js';
+import { listDanglingPorts } from '../services/dangling-ports.js';
 
 export interface UiRoutesConfig {
   db: Db;
-  provider: VpnProvider;
-  router: RouterClient;
+  runtime: Runtime;
 }
 
 function toRouterProtocol(p: string): Protocol {
@@ -37,10 +37,12 @@ function buildSpec(m: {
 }
 
 export function createUiRoutes(config: UiRoutesConfig): Hono {
-  const { db, provider, router } = config;
+  const { db, runtime } = config;
   const app = new Hono();
 
   app.get('/', async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
     const mappings = db.listMappings();
     const withHooks: MappingWithHooks[] = mappings.map((m) => ({
       ...m,
@@ -49,11 +51,17 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
 
     let providerConnected = false;
     let activePorts = 0;
+    let providerPorts: { port: number; expiresAt: number }[] = [];
     try {
-      const ports = await provider.listPorts();
-      activePorts = ports.length;
+      providerPorts = await provider.listPorts();
+      activePorts = providerPorts.length;
       providerConnected = true;
     } catch { /* ignore */ }
+
+    const trackedPorts = new Set(
+      mappings.filter((m) => m.status !== 'expired').map((m) => m.vpnPort)
+    );
+    const danglingPorts = providerPorts.filter((p) => !trackedPorts.has(p.port));
 
     const [routerTest, externalIp] = await Promise.all([
       router.testConnection(),
@@ -65,33 +73,66 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
         connected: providerConnected,
         name: provider.name,
         activePorts,
-        maxPorts: provider.maxPorts,
+        maxPorts: runtime.getMaxPorts(),
       },
       router: { connected: routerTest.ok, name: router.name },
       externalIp: externalIp.ip,
     };
 
-    return c.html(layout('Dashboard', dashboardView(withHooks, status)));
+    return c.html(layout('Dashboard', dashboardView(withHooks, status, danglingPorts)));
   });
 
-  app.get('/create', (c) => {
-    const maxPorts = provider.maxPorts;
+  app.get('/create', async (c) => {
+    const provider = runtime.getProvider();
+    const maxPorts = runtime.getMaxPorts();
     const current = db.listMappings().filter(
       (m) => m.status !== 'expired' && m.status !== 'error'
     ).length;
+
+    const adoptParam = c.req.query('adopt');
+    if (adoptParam) {
+      const adoptPort = parseInt(adoptParam, 10);
+      if (!Number.isFinite(adoptPort) || adoptPort <= 0) {
+        return c.html(layout('New Mapping', '<p>Invalid adopt port.</p>'), 400);
+      }
+      try {
+        const dangling = await listDanglingPorts(provider, db);
+        const match = dangling.find((p) => p.port === adoptPort);
+        if (!match) {
+          return c.html(
+            layout('New Mapping', `<p>Port ${adoptPort} is not a dangling port. <a href="/">Back</a></p>`),
+            404
+          );
+        }
+        return c.html(
+          layout('New Mapping', createView(maxPorts, current, { port: match.port, expiresAt: match.expiresAt }))
+        );
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.html(
+          layout('New Mapping', `<p>Could not reach provider: ${message}. <a href="/">Back</a></p>`),
+          502
+        );
+      }
+    }
+
     return c.html(layout('New Mapping', createView(maxPorts, current)));
   });
 
   app.post('/create', async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
     const body = await c.req.parseBody({ all: true });
 
     const label = String(body['label'] ?? '').trim();
     const destIp = String(body['destIp'] ?? '').trim();
     const destPort = parseInt(String(body['destPort'] ?? '0'), 10);
     const protocol = String(body['protocol'] ?? 'both').trim();
+    const adoptPortRaw = body['adoptPort'] ? String(body['adoptPort']) : '';
+    const adoptPort = adoptPortRaw ? parseInt(adoptPortRaw, 10) : null;
 
     if (!destIp || !destPort) {
-      return c.html(layout('New Mapping', createView(provider.maxPorts,
+      return c.html(layout('New Mapping', createView(runtime.getMaxPorts(),
         db.listMappings().filter((m) => m.status !== 'expired' && m.status !== 'error').length
       )), 400);
     }
@@ -108,7 +149,20 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     }
     const hooks = Object.values(hooksMap).filter((h) => h['type']);
 
-    const providerPort = await provider.createPort({ expiresInDays: 365 });
+    let providerPort: { port: number; expiresAt: number };
+    if (adoptPort && Number.isFinite(adoptPort)) {
+      const dangling = await listDanglingPorts(provider, db);
+      const match = dangling.find((p) => p.port === adoptPort);
+      if (!match) {
+        return c.html(
+          layout('New Mapping', `<p>Port ${adoptPort} is no longer available to adopt. <a href="/">Back</a></p>`),
+          409
+        );
+      }
+      providerPort = { port: match.port, expiresAt: match.expiresAt };
+    } else {
+      providerPort = await provider.createPort({ expiresInDays: 365 });
+    }
     const resolvedLabel = label || `port-${providerPort.port}`;
 
     const mappingId = db.createMapping({
@@ -158,6 +212,7 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
   });
 
   app.post('/edit/:id', async (c) => {
+    const router = runtime.getRouter();
     const id = c.req.param('id');
     const existing = db.getMapping(id);
     if (!existing) return c.html(layout('Not Found', '<p>Mapping not found.</p>'), 404);
@@ -206,6 +261,8 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
   });
 
   app.post('/delete/:id', async (c) => {
+    const provider = runtime.getProvider();
+    const router = runtime.getRouter();
     const id = c.req.param('id');
     const mapping = db.getMapping(id);
     if (!mapping) return c.redirect('/');
@@ -227,6 +284,24 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     db.deleteMapping(id);
     db.logSync('delete', id, { vpnPort: mapping.vpnPort, label: mapping.label });
 
+    return c.redirect('/');
+  });
+
+  app.post('/dangling/:port/release', async (c) => {
+    const provider = runtime.getProvider();
+    const port = parseInt(c.req.param('port'), 10);
+    if (!Number.isFinite(port) || port <= 0) return c.redirect('/');
+
+    const dangling = await listDanglingPorts(provider, db);
+    if (!dangling.some((p) => p.port === port)) return c.redirect('/');
+
+    try {
+      await provider.deletePort(port);
+      db.logSync('dangling_release', null, { vpnPort: port });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Provider error releasing dangling port ${port}: ${msg}`);
+    }
     return c.redirect('/');
   });
 

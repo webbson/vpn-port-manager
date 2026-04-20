@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { Hono } from "hono";
 import { createDb } from "../../src/db.js";
 import type { Db } from "../../src/db.js";
 import { createSettingsService } from "../../src/settings.js";
 import { createSettingsRoutes } from "../../src/routes/settings.js";
+import type { Runtime } from "../../src/runtime.js";
 
 const KEY = "sixteen-or-more-chars-key";
 
@@ -11,6 +12,27 @@ function buildApp(db: Db) {
   const settings = createSettingsService(db, KEY);
   const app = new Hono();
   app.route("/api/settings", createSettingsRoutes({ settings }));
+  return { app, settings };
+}
+
+function fakeRuntime(overrides: Partial<Runtime> = {}): Runtime {
+  return {
+    getProvider: () => { throw new Error("stub"); },
+    getRouter: () => { throw new Error("stub"); },
+    getMaxPorts: () => 0,
+    isReady: () => true,
+    reloadVpn: vi.fn(),
+    reloadRouter: vi.fn(),
+    reloadApp: vi.fn(),
+    stop: vi.fn(),
+    ...overrides,
+  };
+}
+
+function buildAppWithRuntime(db: Db, runtime: Runtime) {
+  const settings = createSettingsService(db, KEY);
+  const app = new Hono();
+  app.route("/api/settings", createSettingsRoutes({ settings, runtime }));
   return { app, settings };
 }
 
@@ -110,5 +132,55 @@ describe("settings API", () => {
     expect(put.status).toBe(200);
     const get = await app.request("/api/settings/app");
     expect(await get.json()).toEqual({ maxPorts: 3, syncIntervalMs: 60000, renewThresholdDays: 7 });
+  });
+
+  it("PUT /api/settings/vpn with runtime triggers reloadVpn and returns restartRequired: false", async () => {
+    const runtime = fakeRuntime();
+    const { app } = buildAppWithRuntime(db, runtime);
+    const res = await app.request("/api/settings/vpn", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ provider: "azire", apiToken: "tok", internalIp: "10.0.0.1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, restartRequired: false });
+    expect(runtime.reloadVpn).toHaveBeenCalled();
+  });
+
+  it("PUT /api/settings/router falls back to restartRequired: true with error when reload throws", async () => {
+    const runtime = fakeRuntime({
+      reloadRouter: vi.fn(() => { throw new Error("boom"); }),
+    });
+    const { app } = buildAppWithRuntime(db, runtime);
+    const res = await app.request("/api/settings/router", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "unifi",
+        host: "https://1.2.3.4",
+        username: "admin",
+        password: "p",
+        inInterfaceId: "i",
+        sourceZoneId: "s",
+        destinationZoneId: "d",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { restartRequired: boolean; reloadError: string };
+    expect(body.restartRequired).toBe(true);
+    expect(body.reloadError).toBe("boom");
+  });
+
+  it("PUT /api/settings/app with runtime triggers reloadApp", async () => {
+    const runtime = fakeRuntime();
+    const { app } = buildAppWithRuntime(db, runtime);
+    const res = await app.request("/api/settings/app", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ maxPorts: 2, syncIntervalMs: 60000, renewThresholdDays: 7 }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, restartRequired: false });
+    expect(runtime.reloadApp).toHaveBeenCalled();
   });
 });
