@@ -1,25 +1,18 @@
 import type { PortMapping, Hook } from '../db.js';
 import { escHtml } from './layout.js';
+import { hookBuilder } from './hook-builder.js';
 
-function hookConfigSummary(hook: Hook): string {
-  try {
-    const cfg = JSON.parse(hook.config) as Record<string, unknown>;
-    const parts: string[] = [];
-    for (const [k, v] of Object.entries(cfg)) {
-      if (v !== null && v !== undefined && v !== '') {
-        parts.push(`${escHtml(k)}: ${escHtml(String(v))}`);
-      }
-    }
-    return parts.join(', ') || '—';
-  } catch {
-    return escHtml(hook.config);
-  }
-}
-
-function hookStatusBadge(hook: Hook): string {
-  if (!hook.lastStatus) return '<span class="muted">never run</span>';
-  const cls = hook.lastStatus === 'success' ? 'active' : 'error';
-  return `<span class="badge ${cls}">${escHtml(hook.lastStatus)}</span>`;
+function hookStatusLine(hooks: Hook[]): string {
+  const errored = hooks.filter((h) => h.lastStatus && h.lastStatus !== 'success' && h.lastStatus !== 'ok');
+  if (errored.length === 0) return '';
+  const items = errored
+    .map((h) => `<li><strong>${escHtml(h.type)}</strong>${h.lastError ? ': ' + escHtml(h.lastError) : ''}</li>`)
+    .join('');
+  return `
+    <div class="info-box" style="border-color:#f8514955;background:#4e1e1e22;color:#f85149;">
+      <strong>Last-run errors:</strong>
+      <ul style="margin:6px 0 0 18px;">${items}</ul>
+    </div>`;
 }
 
 export function editView(mapping: PortMapping, hooks: Hook[]): string {
@@ -27,20 +20,6 @@ export function editView(mapping: PortMapping, hooks: Hook[]): string {
     const sel = mapping.protocol === value ? ' selected' : '';
     return `<option value="${escHtml(value)}"${sel}>${escHtml(label)}</option>`;
   };
-
-  const hooksList = hooks.length === 0
-    ? '<p class="muted">No hooks configured.</p>'
-    : hooks.map((h) => `
-        <div class="hook-item">
-          <div>
-            <div class="hook-type">${escHtml(h.type)}</div>
-            <div class="hook-config">${hookConfigSummary(h)}</div>
-          </div>
-          <div style="text-align:right;flex-shrink:0;">
-            ${hookStatusBadge(h)}
-            ${h.lastError ? `<div style="font-size:11px;color:#f85149;margin-top:4px;">${escHtml(h.lastError)}</div>` : ''}
-          </div>
-        </div>`).join('');
 
   return `
     <div class="page-header">
@@ -56,7 +35,9 @@ export function editView(mapping: PortMapping, hooks: Hook[]): string {
       Status: <span class="badge ${['active','pending','error','expired'].includes(mapping.status) ? mapping.status : 'pending'}">${escHtml(mapping.status)}</span>
     </div>
 
-    <div class="card" style="margin-bottom:24px;">
+    ${hookStatusLine(hooks)}
+
+    <div class="card">
       <form method="POST" action="/edit/${escHtml(mapping.id)}">
         <div class="form-group">
           <label for="label">Label</label>
@@ -83,13 +64,12 @@ export function editView(mapping: PortMapping, hooks: Hook[]): string {
           </select>
         </div>
 
+        ${hookBuilder(hooks)}
+
         <div class="form-actions">
           <button type="submit" class="btn primary">Save Changes</button>
           <a href="/" class="btn secondary">Cancel</a>
         </div>
       </form>
-    </div>
-
-    <div class="section-title">Configured Hooks</div>
-    ${hooksList}`;
+    </div>`;
 }

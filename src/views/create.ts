@@ -1,4 +1,5 @@
 import { escHtml } from './layout.js';
+import { hookBuilder } from './hook-builder.js';
 
 export interface AdoptedPort {
   port: number;
@@ -79,96 +80,12 @@ export function createView(
           </select>
         </div>
 
-        <div class="section-title">Hooks (optional)</div>
-
-        <div id="hooks-container"></div>
-
-        <button type="button" class="btn secondary" id="add-hook-btn"
-                style="margin-bottom:20px;">+ Add Hook</button>
+        ${hookBuilder()}
 
         <div class="form-actions">
-          <button type="submit" class="btn primary">Create Mapping</button>
+          <button type="submit" class="btn primary">${isAdopt ? 'Adopt Port' : 'Create Mapping'}</button>
           <a href="/" class="btn secondary">Cancel</a>
         </div>
       </form>
-    </div>
-
-    <script>
-      (function () {
-        var container = document.getElementById('hooks-container');
-        var addBtn = document.getElementById('add-hook-btn');
-        var hookIndex = 0;
-
-        function pluginFields(n) {
-          return '<div class="form-group"><label>Plugin</label>' +
-            '<select name="hooks[' + n + '][plugin]">' +
-            '<option value="ntfy">ntfy</option>' +
-            '<option value="slack">Slack</option>' +
-            '<option value="discord">Discord</option>' +
-            '</select></div>' +
-            '<div class="form-group"><label>Host / URL</label>' +
-            '<input type="text" name="hooks[' + n + '][host]" placeholder="https://ntfy.sh/topic" /></div>' +
-            '<div class="form-group"><label>Token (optional)</label>' +
-            '<input type="text" name="hooks[' + n + '][token]" /></div>';
-        }
-
-        function webhookFields(n) {
-          return '<div class="form-group"><label>Webhook URL</label>' +
-            '<input type="text" name="hooks[' + n + '][url]" required placeholder="https://..." /></div>' +
-            '<div class="form-group"><label>Method</label>' +
-            '<select name="hooks[' + n + '][method]">' +
-            '<option value="POST">POST</option>' +
-            '<option value="GET">GET</option>' +
-            '<option value="PUT">PUT</option>' +
-            '</select></div>';
-        }
-
-        function commandFields(n) {
-          return '<div class="form-group"><label>Command</label>' +
-            '<input type="text" name="hooks[' + n + '][command]" required placeholder="e.g. /usr/local/bin/notify.sh" /></div>';
-        }
-
-        function renderHookFields(wrapper, n, type) {
-          var fieldsDiv = wrapper.querySelector('.hook-dynamic-fields');
-          if (type === 'plugin') fieldsDiv.innerHTML = pluginFields(n);
-          else if (type === 'webhook') fieldsDiv.innerHTML = webhookFields(n);
-          else if (type === 'command') fieldsDiv.innerHTML = commandFields(n);
-          else fieldsDiv.innerHTML = '';
-        }
-
-        function addHook() {
-          var n = hookIndex++;
-          var wrapper = document.createElement('div');
-          wrapper.className = 'hook-builder-item';
-          wrapper.innerHTML =
-            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">' +
-              '<label style="margin:0;">Hook ' + (n + 1) + '</label>' +
-              '<button type="button" class="hook-remove-btn">Remove</button>' +
-            '</div>' +
-            '<div class="form-group">' +
-              '<label>Type</label>' +
-              '<select name="hooks[' + n + '][type]" class="hook-type-select">' +
-                '<option value="plugin">Plugin</option>' +
-                '<option value="webhook">Webhook</option>' +
-                '<option value="command">Command</option>' +
-              '</select>' +
-            '</div>' +
-            '<div class="hook-dynamic-fields"></div>';
-
-          wrapper.querySelector('.hook-remove-btn').addEventListener('click', function () {
-            wrapper.remove();
-          });
-
-          var typeSelect = wrapper.querySelector('.hook-type-select');
-          typeSelect.addEventListener('change', function () {
-            renderHookFields(wrapper, n, typeSelect.value);
-          });
-
-          container.appendChild(wrapper);
-          renderHookFields(wrapper, n, 'plugin');
-        }
-
-        addBtn.addEventListener('click', addHook);
-      })();
-    </script>`;
+    </div>`;
 }

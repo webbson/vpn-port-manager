@@ -7,6 +7,7 @@ import { getExternalIp } from '../services/external-ip.js';
 import { createView } from '../views/create.js';
 import { editView } from '../views/edit.js';
 import { logsView } from '../views/logs.js';
+import { parseHookForm } from '../views/hook-builder.js';
 import type { Runtime } from '../runtime.js';
 import { listDanglingPorts } from '../services/dangling-ports.js';
 
@@ -137,17 +138,7 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       )), 400);
     }
 
-    const hooksMap: Record<number, Record<string, string>> = {};
-    for (const [key, value] of Object.entries(body)) {
-      const m = key.match(/^hooks\[(\d+)\]\[(\w+)\]$/);
-      if (m) {
-        const idx = parseInt(m[1], 10);
-        const field = m[2];
-        if (!hooksMap[idx]) hooksMap[idx] = {};
-        hooksMap[idx][field] = String(value);
-      }
-    }
-    const hooks = Object.values(hooksMap).filter((h) => h['type']);
+    const hooks = parseHookForm(body as Record<string, unknown>);
 
     let providerPort: { port: number; expiresAt: number };
     if (adoptPort && Number.isFinite(adoptPort)) {
@@ -194,8 +185,7 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     }
 
     for (const h of hooks) {
-      const { type, ...rest } = h;
-      db.createHook({ mappingId, type, config: JSON.stringify(rest) });
+      db.createHook({ mappingId, type: h.type, config: h.config });
     }
 
     db.logSync('create', mappingId, { vpnPort: providerPort.port, label: resolvedLabel });
@@ -217,7 +207,7 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
     const existing = db.getMapping(id);
     if (!existing) return c.html(layout('Not Found', '<p>Mapping not found.</p>'), 404);
 
-    const body = await c.req.parseBody();
+    const body = await c.req.parseBody({ all: true });
 
     const label = String(body['label'] ?? existing.label).trim();
     const destIp = String(body['destIp'] ?? existing.destIp).trim();
@@ -255,7 +245,16 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       }
     }
 
-    db.logSync('update', id, { label, destIp, destPort, protocol });
+    // Replace the full hook set. The form includes only the hooks the user
+    // left on the page, so anything missing from the submission was removed.
+    const incomingHooks = parseHookForm(body as Record<string, unknown>);
+    const existingHooks = db.listHooks(id);
+    for (const h of existingHooks) db.deleteHook(h.id);
+    for (const h of incomingHooks) {
+      db.createHook({ mappingId: id, type: h.type, config: h.config });
+    }
+
+    db.logSync('update', id, { label, destIp, destPort, protocol, hookCount: incomingHooks.length });
 
     return c.redirect('/');
   });
