@@ -67,16 +67,28 @@ Hono framework. REST API at `/api/*` (mappings, settings, status, logs) consumed
 
 ## Adding a New VPN Provider
 
-1. Create `src/providers/{name}.ts` implementing `VpnProvider` from `types.ts`.
-2. Extend `VpnSettings.provider` union in `src/settings.ts` and add a case to the switch in `src/providers/index.ts`.
-3. Add tests in `tests/providers/{name}.test.ts`.
+Each provider is self-contained under `src/providers/{id}/`:
+
+1. Create `src/providers/{id}/client.ts` — implement `VpnProvider` from `../types.ts`.
+2. Create `src/providers/{id}/schema.ts` — zod schema with `provider: z.literal("{id}")`, the `Settings` type, and a `describeStored(s)` helper returning non-secret fields for `GET /api/settings/vpn`.
+3. Create `src/providers/{id}/view.ts` — `renderFields(stored)` HTML fragment and a `readerScript` string that defines `read{Id}Form(opts)` in the browser.
+4. Create `src/providers/{id}/index.ts` — export a `ProviderDefinition` wiring the above.
+5. Register it in `src/providers/registry.ts` by adding it to `providerDefinitions`. Once two providers exist, switch `vpnSettingsSchema` to `z.discriminatedUnion("provider", [...])`.
+6. Add tests in `tests/providers/{id}.test.ts` importing `src/providers/{id}/client.ts`.
+
+No changes to views, routes, or the settings service are needed — they iterate the registry.
 
 ## Adding a New Router
 
-1. Create `src/routers/{name}/client.ts` implementing `RouterClient` from `../types.ts`. Define a handle shape containing the router-native identifiers and use `spec.vpnPort`/`destIp`/`destPort`/`protocol`/`label` to construct rules.
-2. Extend `RouterSettings.type` union in `src/routers/types.ts` and add a case to the switch in `src/routers/index.ts`.
-3. Extend `src/views/settings.ts` + `src/views/setup.ts` with the router-specific fields (or factor into sub-views).
-4. Add tests in `tests/routers/{name}.test.ts`.
+Each router is self-contained under `src/routers/{id}/`:
+
+1. Create `src/routers/{id}/client.ts` — implement `RouterClient` from `../types.ts`. Define an opaque handle shape holding the router-native identifiers.
+2. Create `src/routers/{id}/schema.ts` — zod schema with `type: z.literal("{id}")`, the `Settings` type, and `describeStored(s)`.
+3. Create `src/routers/{id}/view.ts` — `renderFields(stored)` HTML fragment and a `readerScript` string defining `read{Id}Form(opts)` on the client. If the router supports discovery, also define a `discover{Id}()` function here that calls `POST /api/settings/router/discover` and populates the UI selects.
+4. (Optional) Create `src/routers/{id}/discovery.ts` — function that logs into the router and returns the dropdown data. Referenced from the definition's `discover` property.
+5. Create `src/routers/{id}/index.ts` — export a `RouterDefinition` wiring it all together.
+6. Register it in `src/routers/registry.ts` by adding it to `routerDefinitions`. Once two routers exist, switch `routerSettingsSchema` to `z.discriminatedUnion("type", [...])`.
+7. Add tests in `tests/routers/{id}.test.ts`.
 
 ## Adding a New Hook Plugin
 

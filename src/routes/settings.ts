@@ -1,5 +1,4 @@
 import { Hono } from "hono";
-import { z } from "zod";
 import {
   appSettingsSchema,
   routerSettingsSchema,
@@ -7,17 +6,11 @@ import {
   type SettingsService,
   type VpnSettings,
 } from "../settings.js";
+import type { RouterSettings } from "../settings.js";
 import { createProvider } from "../providers/index.js";
 import { createRouter } from "../routers/index.js";
-import type { RouterSettings } from "../routers/types.js";
-import { discoverUnifi } from "../routers/unifi/discovery.js";
-
-const routerCredsSchema = z.object({
-  type: z.literal("unifi"),
-  host: z.string().url(),
-  username: z.string().min(1),
-  password: z.string().min(1),
-});
+import { getProviderDefinition } from "../providers/registry.js";
+import { getRouterDefinition } from "../routers/registry.js";
 
 export interface SettingsRoutesConfig {
   settings: SettingsService;
@@ -30,11 +23,9 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
   app.get("/vpn", (c) => {
     const vpn = settings.getVpn();
     if (!vpn) return c.json({ configured: false });
-    return c.json({
-      configured: true,
-      provider: vpn.provider,
-      internalIp: vpn.internalIp,
-    });
+    const def = getProviderDefinition(vpn.provider);
+    if (!def) return c.json({ configured: false });
+    return c.json({ configured: true, ...def.describeStored(vpn) });
   });
 
   app.put("/vpn", async (c) => {
@@ -53,15 +44,9 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
   app.get("/router", (c) => {
     const r = settings.getRouter();
     if (!r) return c.json({ configured: false });
-    return c.json({
-      configured: true,
-      type: r.type,
-      host: r.host,
-      username: r.username,
-      inInterfaceId: r.inInterfaceId,
-      sourceZoneId: r.sourceZoneId,
-      destinationZoneId: r.destinationZoneId,
-    });
+    const def = getRouterDefinition(r.type);
+    if (!def) return c.json({ configured: false });
+    return c.json({ configured: true, ...def.describeStored(r) });
   });
 
   app.put("/router", async (c) => {
@@ -78,36 +63,25 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
     return c.json(await router.testConnection());
   });
 
-  // Populate dropdowns in the UI. Accepts a partial body — when password is
-  // missing or blank, falls back to the stored one so the user doesn't have
+  // Dispatch discovery to the selected router's definition. Falls back to the
+  // stored password when the request body omits it, so the user doesn't have
   // to retype it every time.
   app.post("/router/discover", async (c) => {
     const body = (await c.req.json()) as Record<string, unknown>;
+    const typeId = (body.type as string | undefined) ?? settings.getRouter()?.type;
+    if (!typeId) return c.json({ ok: false, error: "router type missing" }, 400);
+    const def = getRouterDefinition(typeId);
+    if (!def) return c.json({ ok: false, error: `unknown router type: ${typeId}` }, 400);
+    if (!def.discover) {
+      return c.json({ ok: false, error: `${typeId} does not support discovery` }, 400);
+    }
     const stored = settings.getRouter();
-    const merged = {
-      type: (body.type as string | undefined) ?? stored?.type ?? "unifi",
-      host: (body.host as string | undefined) ?? stored?.host ?? "",
-      username: (body.username as string | undefined) ?? stored?.username ?? "",
-      password:
-        (body.password as string | undefined) && (body.password as string).length > 0
-          ? (body.password as string)
-          : stored?.password ?? "",
-    };
-    const parsed = routerCredsSchema.safeParse(merged);
-    if (!parsed.success) {
-      return c.json({ ok: false, error: parsed.error.issues }, 400);
+    const merged: Record<string, unknown> = { ...(stored ?? {}), ...body };
+    if (!merged.password && stored && (stored as Record<string, unknown>).password) {
+      merged.password = (stored as Record<string, unknown>).password;
     }
-    try {
-      const result = await discoverUnifi({
-        host: parsed.data.host,
-        username: parsed.data.username,
-        password: parsed.data.password,
-      });
-      return c.json({ ok: true, ...result });
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ ok: false, error: message });
-    }
+    const result = await def.discover(merged);
+    return c.json(result);
   });
 
   app.get("/app", (c) => c.json(settings.getApp()));

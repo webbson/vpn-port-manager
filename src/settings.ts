@@ -1,24 +1,12 @@
 import { z } from "zod";
 import { encrypt, decrypt } from "./crypto.js";
 import type { Db } from "./db.js";
-import type { RouterSettings } from "./routers/types.js";
+import { vpnSettingsSchema } from "./providers/registry.js";
+import { routerSettingsSchema } from "./routers/registry.js";
 
-export const vpnSettingsSchema = z.object({
-  provider: z.literal("azire"),
-  apiToken: z.string().min(1),
-  internalIp: z.string().min(1),
-});
+export { vpnSettingsSchema, routerSettingsSchema };
 export type VpnSettings = z.infer<typeof vpnSettingsSchema>;
-
-export const routerSettingsSchema = z.object({
-  type: z.literal("unifi"),
-  host: z.string().url(),
-  username: z.string().min(1),
-  password: z.string().min(1),
-  inInterfaceId: z.string().min(1),
-  sourceZoneId: z.string().min(1),
-  destinationZoneId: z.string().min(1),
-});
+export type RouterSettings = z.infer<typeof routerSettingsSchema>;
 
 export const appSettingsSchema = z.object({
   maxPorts: z.number().int().positive().nullable(),

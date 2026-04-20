@@ -1,15 +1,17 @@
-import type { RouterClient, RouterSettings } from "./types.js";
-import { createUnifiRouter } from "./unifi/client.js";
+import type { RouterClient } from "./types.js";
+import type { RouterSettings } from "../settings.js";
+import { getRouterDefinition } from "./registry.js";
 
 export function createRouter(settings: RouterSettings): RouterClient {
-  switch (settings.type) {
-    case "unifi":
-      return createUnifiRouter(settings);
-    default: {
-      const exhaustive: never = settings.type;
-      throw new Error(`Unknown router type: ${exhaustive as string}`);
-    }
-  }
+  const def = getRouterDefinition(settings.type);
+  if (!def) throw new Error(`Unknown router type: ${settings.type}`);
+  return def.create(settings);
 }
 
-export type { RouterClient, RouterSettings, PortForwardSpec, RouterHandle, Protocol, RouterTestResult } from "./types.js";
+export type {
+  RouterClient,
+  RouterHandle,
+  PortForwardSpec,
+  Protocol,
+  RouterTestResult,
+} from "./types.js";

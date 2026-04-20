@@ -1,4 +1,6 @@
 import { escHtml } from "./layout.js";
+import { providerDefinitions } from "../providers/registry.js";
+import { routerDefinitions } from "../routers/registry.js";
 
 export function setupView(props: { issues?: string[] } = {}): string {
   const issues = props.issues ?? [];
@@ -8,6 +10,10 @@ export function setupView(props: { issues?: string[] } = {}): string {
          <ul style="margin:8px 0 0 18px;">${issues.map((m) => `<li>${escHtml(m)}</li>`).join("")}</ul>
        </div>`
     : "";
+
+  const firstProviderId = providerDefinitions[0].id;
+  const firstRouterId = routerDefinitions[0].id;
+
   return `
     <div class="page-header">
       <h1>Set up VPN Port Manager</h1>
@@ -24,16 +30,23 @@ export function setupView(props: { issues?: string[] } = {}): string {
     <form id="vpn-form" class="card" style="margin-bottom:24px;">
       <div class="form-group">
         <label for="vpn-provider">Provider</label>
-        <select id="vpn-provider" name="provider"><option value="azire" selected>Azire VPN</option></select>
+        <select id="vpn-provider" onchange="onVpnProviderChange()">
+          ${providerDefinitions
+            .map(
+              (d) =>
+                `<option value="${escHtml(d.id)}"${d.id === firstProviderId ? " selected" : ""}>${escHtml(d.label)}</option>`
+            )
+            .join("")}
+        </select>
       </div>
-      <div class="form-group">
-        <label for="vpn-apiToken">API token</label>
-        <input id="vpn-apiToken" name="apiToken" type="text" autocomplete="off" placeholder="Bearer token from the provider" />
-      </div>
-      <div class="form-group">
-        <label for="vpn-internalIp">Internal VPN IP</label>
-        <input id="vpn-internalIp" name="internalIp" type="text" placeholder="10.0.16.181" />
-      </div>
+      ${providerDefinitions
+        .map(
+          (d) =>
+            `<div class="provider-fields" data-provider-id="${escHtml(d.id)}"${d.id === firstProviderId ? "" : " style=\"display:none;\""}>
+               ${d.renderFields(null)}
+             </div>`
+        )
+        .join("")}
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveVpn()">Save VPN</button>
         <button type="button" class="btn secondary" onclick="testVpn()">Test</button>
@@ -45,40 +58,23 @@ export function setupView(props: { issues?: string[] } = {}): string {
     <form id="router-form" class="card" style="margin-bottom:24px;">
       <div class="form-group">
         <label for="router-type">Type</label>
-        <select id="router-type" name="type"><option value="unifi" selected>UniFi (UDM-Pro)</option></select>
+        <select id="router-type" onchange="onRouterTypeChange()">
+          ${routerDefinitions
+            .map(
+              (d) =>
+                `<option value="${escHtml(d.id)}"${d.id === firstRouterId ? " selected" : ""}>${escHtml(d.label)}</option>`
+            )
+            .join("")}
+        </select>
       </div>
-      <div class="form-group">
-        <label for="router-host">Host</label>
-        <input id="router-host" name="host" type="text" placeholder="https://192.168.1.1" />
-      </div>
-      <div class="form-group">
-        <label for="router-username">Username</label>
-        <input id="router-username" name="username" type="text" autocomplete="off" />
-      </div>
-      <div class="form-group">
-        <label for="router-password">Password</label>
-        <input id="router-password" name="password" type="password" autocomplete="new-password" />
-      </div>
-      <div class="info-box">
-        Click <strong>Discover</strong> to pull interfaces + zones from UniFi.
-        Needs the host, username and password above first.
-      </div>
-      <div class="form-actions" style="margin-top:0;margin-bottom:14px;">
-        <button type="button" class="btn secondary" onclick="discoverRouter()">Discover from UniFi</button>
-        <span id="router-discover-result" class="muted"></span>
-      </div>
-      <div class="form-group">
-        <label for="router-inInterfaceId">VPN interface</label>
-        <select id="router-inInterfaceId" name="inInterfaceId"><option value="">— run Discover first —</option></select>
-      </div>
-      <div class="form-group">
-        <label for="router-sourceZoneId">Firewall source zone (where VPN traffic arrives)</label>
-        <select id="router-sourceZoneId" name="sourceZoneId"><option value="">— run Discover first —</option></select>
-      </div>
-      <div class="form-group">
-        <label for="router-destinationZoneId">Firewall destination zone (LAN target)</label>
-        <select id="router-destinationZoneId" name="destinationZoneId"><option value="">— run Discover first —</option></select>
-      </div>
+      ${routerDefinitions
+        .map(
+          (d) =>
+            `<div class="router-fields" data-router-id="${escHtml(d.id)}"${d.id === firstRouterId ? "" : " style=\"display:none;\""}>
+               ${d.renderFields(null)}
+             </div>`
+        )
+        .join("")}
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveRouter()">Save router</button>
         <button type="button" class="btn secondary" onclick="testRouter()">Test</button>
@@ -91,90 +87,91 @@ export function setupView(props: { issues?: string[] } = {}): string {
     </div>
 
     <script>
-      function show(id, msg, ok) {
-        const el = document.getElementById(id); el.textContent = msg;
-        el.style.color = ok ? '#3fb950' : '#f85149';
+      ${providerDefinitions.map((d) => d.readerScript).join("\n")}
+      ${routerDefinitions.map((d) => d.readerScript).join("\n")}
+      ${setupDispatchScript()}
+    </script>
+  `;
+}
+
+function setupDispatchScript(): string {
+  const vpnDispatch = providerDefinitions
+    .map((d) => `if (id === '${d.id}') return ${d.readerName}(opts);`)
+    .join("\n    ");
+  const routerDispatch = routerDefinitions
+    .map((d) => `if (id === '${d.id}') return ${d.readerName}(opts);`)
+    .join("\n    ");
+
+  return `
+    function show(id, msg, ok) {
+      const el = document.getElementById(id); el.textContent = msg;
+      el.style.color = ok ? '#3fb950' : '#f85149';
+    }
+    function onVpnProviderChange() {
+      const id = document.getElementById('vpn-provider').value;
+      document.querySelectorAll('.provider-fields').forEach((el) => {
+        el.style.display = el.dataset.providerId === id ? '' : 'none';
+      });
+    }
+    function onRouterTypeChange() {
+      const id = document.getElementById('router-type').value;
+      document.querySelectorAll('.router-fields').forEach((el) => {
+        el.style.display = el.dataset.routerId === id ? '' : 'none';
+      });
+    }
+    function readVpn(opts) {
+      const id = document.getElementById('vpn-provider').value;
+      ${vpnDispatch}
+      throw new Error('Unknown provider: ' + id);
+    }
+    function readRouter(opts) {
+      const id = document.getElementById('router-type').value;
+      ${routerDispatch}
+      throw new Error('Unknown router type: ' + id);
+    }
+    async function postJson(url, method, body) {
+      const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      return { ok: res.ok, data };
+    }
+    const saved = { vpn: false, router: false };
+    function maybeDone() {
+      if (saved.vpn && saved.router) {
+        document.getElementById('done-box').style.display = 'block';
+        localStorage.setItem('restartRequired', '1');
       }
-      function readVpn() {
-        return {
-          provider: document.getElementById('vpn-provider').value,
-          apiToken: document.getElementById('vpn-apiToken').value.trim(),
-          internalIp: document.getElementById('vpn-internalIp').value.trim(),
-        };
-      }
-      function readRouter() {
-        return {
-          type: document.getElementById('router-type').value,
-          host: document.getElementById('router-host').value.trim(),
-          username: document.getElementById('router-username').value.trim(),
-          password: document.getElementById('router-password').value,
-          inInterfaceId: document.getElementById('router-inInterfaceId').value.trim(),
-          sourceZoneId: document.getElementById('router-sourceZoneId').value.trim(),
-          destinationZoneId: document.getElementById('router-destinationZoneId').value.trim(),
-        };
-      }
-      async function postJson(url, method, body) {
-        const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const data = await res.json().catch(() => ({}));
-        return { ok: res.ok, data };
-      }
-      async function discoverRouter() {
-        const host = document.getElementById('router-host').value.trim();
-        const username = document.getElementById('router-username').value.trim();
-        const password = document.getElementById('router-password').value;
-        show('router-discover-result', 'Discovering…', true);
-        const { data } = await postJson('/api/settings/router/discover', 'POST', {
-          type: 'unifi', host, username, password,
-        });
-        if (!data || !data.ok) {
-          show('router-discover-result', 'Failed: ' + (data && data.error ? JSON.stringify(data.error) : 'unknown'), false);
-          return;
-        }
-        populateSelect('router-inInterfaceId', data.interfaces || [], true);
-        populateSelect('router-sourceZoneId', data.zones || [], false);
-        populateSelect('router-destinationZoneId', data.zones || [], false);
-        show('router-discover-result', 'Loaded ' + (data.interfaces ? data.interfaces.length : 0) + ' interfaces, ' + (data.zones ? data.zones.length : 0) + ' zones.', true);
-      }
-      function populateSelect(id, items, isInterface) {
-        const sel = document.getElementById(id);
-        sel.innerHTML = '';
-        for (const it of items) {
-          const opt = document.createElement('option');
-          opt.value = it.id;
-          const extra = isInterface
-            ? (it.purpose ? ' (' + it.purpose + ')' : '')
-            : (it.key ? ' (' + it.key + ')' : '');
-          opt.textContent = it.name + extra + ' — ' + it.id;
-          sel.appendChild(opt);
-        }
-      }
-      const saved = { vpn: false, router: false };
-      function maybeDone() {
-        if (saved.vpn && saved.router) {
-          document.getElementById('done-box').style.display = 'block';
-          localStorage.setItem('restartRequired', '1');
-        }
-      }
-      async function saveVpn() {
-        const { ok, data } = await postJson('/api/settings/vpn', 'PUT', readVpn());
+    }
+    async function saveVpn() {
+      try {
+        const body = readVpn({ requireSecret: true });
+        const { ok, data } = await postJson('/api/settings/vpn', 'PUT', body);
         if (ok) { show('vpn-result', 'Saved.', true); saved.vpn = true; maybeDone(); }
         else show('vpn-result', 'Save failed: ' + JSON.stringify(data), false);
-      }
-      async function testVpn() {
+      } catch (e) { show('vpn-result', e.message, false); }
+    }
+    async function testVpn() {
+      try {
+        const body = readVpn({ requireSecret: true });
         show('vpn-result', 'Testing…', true);
-        const { data } = await postJson('/api/settings/vpn/test', 'POST', readVpn());
+        const { data } = await postJson('/api/settings/vpn/test', 'POST', body);
         show('vpn-result', data.ok ? 'Connected.' : ('Failed: ' + (data.error ?? 'unknown')), data.ok);
-      }
-      async function saveRouter() {
-        const { ok, data } = await postJson('/api/settings/router', 'PUT', readRouter());
+      } catch (e) { show('vpn-result', e.message, false); }
+    }
+    async function saveRouter() {
+      try {
+        const body = readRouter({ requireSecret: true });
+        const { ok, data } = await postJson('/api/settings/router', 'PUT', body);
         if (ok) { show('router-result', 'Saved.', true); saved.router = true; maybeDone(); }
         else show('router-result', 'Save failed: ' + JSON.stringify(data), false);
-      }
-      async function testRouter() {
+      } catch (e) { show('router-result', e.message, false); }
+    }
+    async function testRouter() {
+      try {
+        const body = readRouter({ requireSecret: true });
         show('router-result', 'Testing…', true);
-        const { data } = await postJson('/api/settings/router/test', 'POST', readRouter());
+        const { data } = await postJson('/api/settings/router/test', 'POST', body);
         show('router-result', data.ok ? 'Connected.' : ('Failed: ' + (data.error ?? 'unknown')), data.ok);
-      }
-    </script>
+      } catch (e) { show('router-result', e.message, false); }
+    }
   `;
 }

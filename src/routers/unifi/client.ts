@@ -2,9 +2,9 @@ import type {
   PortForwardSpec,
   RouterClient,
   RouterHandle,
-  RouterSettings,
   RouterTestResult,
 } from "../types.js";
+import type { UnifiRouterSettings } from "./schema.js";
 
 interface UnifiHandle extends RouterHandle {
   natId: string | null;
@@ -136,7 +136,7 @@ function firewallPolicyFor(
   };
 }
 
-export function createUnifiRouter(settings: RouterSettings): RouterClient {
+export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
   const apiBase = `${settings.host}/proxy/network/v2/api/site/default`;
   let cookie = "";
   let csrfToken = "";

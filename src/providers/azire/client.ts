@@ -1,4 +1,4 @@
-import type { VpnProvider, ProviderPort } from "./types.js";
+import type { VpnProvider, ProviderPort } from "../types.js";
 
 const BASE_URL = "https://api.azirevpn.com/v3/portforwardings";
 

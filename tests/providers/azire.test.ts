@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createAzireProvider } from "../../src/providers/azire.js";
+import { createAzireProvider } from "../../src/providers/azire/client.js";
 
 const TEST_TOKEN = "test-api-token";
 const TEST_IP = "10.0.16.181";
