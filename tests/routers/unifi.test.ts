@@ -66,7 +66,8 @@ describe("UniFi RouterClient (v2)", () => {
   it("ensurePortForward posts a DNAT rule and a firewall policy", async () => {
     fetchMock
       .mockResolvedValueOnce(loginResponse())
-      .mockResolvedValueOnce(mockResponse({ _id: "nat-1" }))
+      .mockResolvedValueOnce(mockResponse([])) // GET /nat (list for rule_index)
+      .mockResolvedValueOnce(mockResponse({ _id: "nat-1", rule_index: 0 }))
       .mockResolvedValueOnce(mockResponse({ _id: "fw-1" }));
 
     const router = createRouter(settings);
@@ -74,7 +75,11 @@ describe("UniFi RouterClient (v2)", () => {
 
     expect(handle).toEqual({ natId: "nat-1", firewallId: "fw-1" });
 
-    const [natUrl, natOpts] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const [listUrl, listOpts] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(listUrl).toBe(`${settings.host}${V2}/nat`);
+    expect(listOpts.method ?? "GET").toBe("GET");
+
+    const [natUrl, natOpts] = fetchMock.mock.calls[2] as [string, RequestInit];
     expect(natUrl).toBe(`${settings.host}${V2}/nat`);
     expect(natOpts.method).toBe("POST");
     const natBody = JSON.parse(natOpts.body as string);
@@ -88,10 +93,11 @@ describe("UniFi RouterClient (v2)", () => {
       destination_filter: { filter_type: "ADDRESS_AND_PORT", port: "51820", invert_port: false },
       source_filter: { filter_type: "NONE" },
       setting_preference: "manual",
+      rule_index: 0, // empty list → first index is 0
     });
     expect((natOpts.headers as Record<string, string>)["X-CSRF-Token"]).toBe("csrf-xyz");
 
-    const [fwUrl, fwOpts] = fetchMock.mock.calls[2] as [string, RequestInit];
+    const [fwUrl, fwOpts] = fetchMock.mock.calls[3] as [string, RequestInit];
     expect(fwUrl).toBe(`${settings.host}${V2}/firewall-policies`);
     const fwBody = JSON.parse(fwOpts.body as string);
     expect(fwBody).toMatchObject({
@@ -110,21 +116,23 @@ describe("UniFi RouterClient (v2)", () => {
   it("rolls back the NAT rule when firewall creation fails", async () => {
     fetchMock
       .mockResolvedValueOnce(loginResponse())
-      .mockResolvedValueOnce(mockResponse({ _id: "nat-1" }))
+      .mockResolvedValueOnce(mockResponse([])) // GET /nat (list)
+      .mockResolvedValueOnce(mockResponse({ _id: "nat-1", rule_index: 0 }))
       .mockResolvedValueOnce(mockResponse({ meta: { msg: "bad zone" } }, { status: 400, statusText: "Bad Request" }))
       .mockResolvedValueOnce(mockResponse({}));
 
     const router = createRouter(settings);
     await expect(router.ensurePortForward(spec)).rejects.toThrow(/bad zone/);
 
-    const rollback = fetchMock.mock.calls[3] as [string, RequestInit];
+    const rollback = fetchMock.mock.calls[4] as [string, RequestInit];
     expect(rollback[0]).toBe(`${settings.host}${V2}/nat/nat-1`);
     expect(rollback[1].method).toBe("DELETE");
   });
 
-  it("updatePortForward PUTs both resources with new fields", async () => {
+  it("updatePortForward PUTs both resources with new fields, preserving rule_index", async () => {
     fetchMock
       .mockResolvedValueOnce(loginResponse())
+      .mockResolvedValueOnce(mockResponse({ _id: "nat-1", rule_index: 7 })) // GET /nat/:id
       .mockResolvedValueOnce(mockResponse({}))
       .mockResolvedValueOnce(mockResponse({}));
 
@@ -135,10 +143,17 @@ describe("UniFi RouterClient (v2)", () => {
     );
 
     expect(handle).toEqual({ natId: "nat-1", firewallId: "fw-1" });
+
     expect(fetchMock.mock.calls[1][0]).toBe(`${settings.host}${V2}/nat/nat-1`);
-    expect((fetchMock.mock.calls[1][1] as RequestInit).method).toBe("PUT");
-    expect(fetchMock.mock.calls[2][0]).toBe(`${settings.host}${V2}/firewall-policies/fw-1`);
-    expect((fetchMock.mock.calls[2][1] as RequestInit).method).toBe("PUT");
+    expect((fetchMock.mock.calls[1][1] as RequestInit).method ?? "GET").toBe("GET");
+
+    expect(fetchMock.mock.calls[2][0]).toBe(`${settings.host}${V2}/nat/nat-1`);
+    const natPut = fetchMock.mock.calls[2][1] as RequestInit;
+    expect(natPut.method).toBe("PUT");
+    expect(JSON.parse(natPut.body as string)).toMatchObject({ _id: "nat-1", rule_index: 7 });
+
+    expect(fetchMock.mock.calls[3][0]).toBe(`${settings.host}${V2}/firewall-policies/fw-1`);
+    expect((fetchMock.mock.calls[3][1] as RequestInit).method).toBe("PUT");
   });
 
   it("deletePortForward DELETEs NAT then batch-deletes firewall", async () => {
@@ -162,9 +177,10 @@ describe("UniFi RouterClient (v2)", () => {
   it("repairPortForward re-creates only missing resources", async () => {
     fetchMock
       .mockResolvedValueOnce(loginResponse())
-      .mockResolvedValueOnce(mockResponse(null, { status: 404, statusText: "Not Found" }))
-      .mockResolvedValueOnce(mockResponse({ _id: "nat-new" }))
-      .mockResolvedValueOnce(mockResponse({ _id: "fw-old" }));
+      .mockResolvedValueOnce(mockResponse(null, { status: 404, statusText: "Not Found" })) // GET /nat/nat-gone
+      .mockResolvedValueOnce(mockResponse([{ rule_index: 3 }])) // GET /nat (list for next index)
+      .mockResolvedValueOnce(mockResponse({ _id: "nat-new", rule_index: 4 })) // POST /nat
+      .mockResolvedValueOnce(mockResponse({ _id: "fw-old" })); // GET /firewall-policies/fw-old
 
     const router = createRouter(settings);
     const handle = await router.repairPortForward(
@@ -173,6 +189,27 @@ describe("UniFi RouterClient (v2)", () => {
     );
 
     expect(handle).toEqual({ natId: "nat-new", firewallId: "fw-old" });
+
+    const natPost = fetchMock.mock.calls[3][1] as RequestInit;
+    expect(JSON.parse(natPost.body as string).rule_index).toBe(4);
+  });
+
+  it("createNat picks max(rule_index)+1 so a second mapping doesn't collide", async () => {
+    fetchMock
+      .mockResolvedValueOnce(loginResponse())
+      .mockResolvedValueOnce(mockResponse([
+        { _id: "nat-a", rule_index: 0 },
+        { _id: "nat-b", rule_index: 5 },
+        { _id: "nat-c", rule_index: 2 },
+      ]))
+      .mockResolvedValueOnce(mockResponse({ _id: "nat-new", rule_index: 6 }))
+      .mockResolvedValueOnce(mockResponse({ _id: "fw-new" }));
+
+    const router = createRouter(settings);
+    await router.ensurePortForward(spec);
+
+    const natPost = fetchMock.mock.calls[2][1] as RequestInit;
+    expect(JSON.parse(natPost.body as string).rule_index).toBe(6);
   });
 
   it("testConnection returns ok on success", async () => {

@@ -75,10 +75,14 @@ interface FirewallPolicy {
   };
 }
 
-function natRuleFor(spec: PortForwardSpec, inInterfaceId: string): Omit<NatRule, "_id"> {
+function natRuleFor(
+  spec: PortForwardSpec,
+  inInterfaceId: string,
+  ruleIndex: number
+): Omit<NatRule, "_id"> {
   return {
     enabled: true,
-    rule_index: 0,
+    rule_index: ruleIndex,
     is_predefined: false,
     description: `VPM: ${spec.label}`,
     type: "DNAT",
@@ -201,17 +205,38 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
     captureCsrf(res);
   }
 
+  // UniFi v2 requires rule_index to be unique across all NAT rules. Fetch the
+  // existing set and pick max+1 so concurrent mappings don't collide.
+  async function nextNatRuleIndex(): Promise<number> {
+    const raw = (await request("/nat")) as unknown;
+    const rules: NatRule[] = Array.isArray(raw)
+      ? (raw as NatRule[])
+      : (raw && typeof raw === "object" && Array.isArray((raw as { data?: unknown }).data)
+          ? ((raw as { data: NatRule[] }).data)
+          : []);
+    let max = -1;
+    for (const r of rules) {
+      if (typeof r.rule_index === "number" && r.rule_index > max) max = r.rule_index;
+    }
+    return max + 1;
+  }
+
   async function createNat(spec: PortForwardSpec): Promise<string> {
+    const ruleIndex = await nextNatRuleIndex();
     const body = (await request("/nat", {
       method: "POST",
-      body: JSON.stringify(natRuleFor(spec, settings.inInterfaceId)),
+      body: JSON.stringify(natRuleFor(spec, settings.inInterfaceId, ruleIndex)),
     })) as NatRule;
     if (!body._id) throw new Error("UniFi created a NAT rule but returned no _id");
     return body._id;
   }
 
   async function updateNat(id: string, spec: PortForwardSpec): Promise<void> {
-    const payload: NatRule = { ...natRuleFor(spec, settings.inInterfaceId), _id: id };
+    // Preserve the existing rule_index; otherwise the PUT would try to claim
+    // index 0 and collide with whichever rule already owns it.
+    const existing = await getNat(id);
+    const ruleIndex = existing?.rule_index ?? (await nextNatRuleIndex());
+    const payload: NatRule = { ...natRuleFor(spec, settings.inInterfaceId, ruleIndex), _id: id };
     await request(`/nat/${id}`, { method: "PUT", body: JSON.stringify(payload) });
   }
 
