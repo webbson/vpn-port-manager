@@ -60,6 +60,16 @@ describe("hookBuilder", () => {
     expect(html).toContain('"headers":{"Authorization":"Bearer abc","X-Trace":"1"}');
   });
 
+  it("emits a syntactically valid inline <script> (no unescaped \\n in string literals)", () => {
+    const html = hookBuilder();
+    const match = html.match(/<script>([\s\S]*?)<\/script>/);
+    expect(match, "no inline <script> block found").toBeTruthy();
+    // The IIFE body must parse. This catches the class of bug where a
+    // single-char escape like '\n' in the TS source survives into the
+    // template-literal output as a real newline and breaks the string.
+    expect(() => new Function(match![1])).not.toThrow();
+  });
+
   it("escapes < in seed JSON so </script> can't terminate the inline script", () => {
     const html = hookBuilder([mkHook("webhook", { url: "</script><script>alert(1)</script>" })]);
     // The raw </script that would end the inline <script> block must not appear.

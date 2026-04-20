@@ -217,7 +217,7 @@ export function hookBuilder(existing: Hook[] = []): string {
           headers.forEach(function (h) { lines.push(h[0] + ': ' + h[1]); });
           lines.push('');
           lines.push(JSON.stringify(SAMPLE_PAYLOAD, null, 2));
-          pre.textContent = lines.join('\n');
+          pre.textContent = lines.join('\\n');
         }
 
         function bindWebhookControls(wrapper, n) {
