@@ -44,7 +44,9 @@ describe("SettingsService", () => {
       host: "https://192.168.1.1",
       username: "admin",
       password: "correct horse battery staple",
-      vpnInterface: "wg0",
+      inInterfaceId: "iface-1",
+      sourceZoneId: "zone-src",
+      destinationZoneId: "zone-dst",
     });
     const row = db.getSetting("router")!;
     expect(row.encrypted).toBe(true);
@@ -74,7 +76,9 @@ describe("SettingsService", () => {
       host: "https://1.2.3.4",
       username: "u",
       password: "p",
-      vpnInterface: "wg0",
+      inInterfaceId: "iface-1",
+      sourceZoneId: "zone-src",
+      destinationZoneId: "zone-dst",
     });
     expect(svc.isConfigured()).toBe(true);
   });
@@ -94,7 +98,9 @@ describe("SettingsService", () => {
         host: "not-a-url",
         username: "u",
         password: "p",
-        vpnInterface: "wg0",
+        inInterfaceId: "iface-1",
+      sourceZoneId: "zone-src",
+      destinationZoneId: "zone-dst",
       })
     ).toThrow();
   });

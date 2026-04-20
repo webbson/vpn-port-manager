@@ -49,7 +49,9 @@ export function createSettingsRoutes(config: SettingsRoutesConfig): Hono {
       type: r.type,
       host: r.host,
       username: r.username,
-      vpnInterface: r.vpnInterface,
+      inInterfaceId: r.inInterfaceId,
+      sourceZoneId: r.sourceZoneId,
+      destinationZoneId: r.destinationZoneId,
     });
   });
 

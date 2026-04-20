@@ -30,5 +30,10 @@ export interface RouterSettings {
   host: string;
   username: string;
   password: string;
-  vpnInterface: string;
+  // UniFi v2 NAT/firewall are keyed by internal IDs, not interface names.
+  // Grab these from the UniFi UI (DevTools → Network tab) while creating
+  // a test rule, or the /setup wizard has a Discover button.
+  inInterfaceId: string;      // NAT: in_interface (VPN interface ID)
+  sourceZoneId: string;       // Firewall: source.zone_id  (e.g. External/VPN zone)
+  destinationZoneId: string;  // Firewall: destination.zone_id (e.g. Internal/LAN zone)
 }

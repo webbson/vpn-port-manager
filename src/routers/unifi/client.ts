@@ -5,54 +5,139 @@ import type {
   RouterSettings,
   RouterTestResult,
 } from "../types.js";
-import type { DnatRule, FirewallRule } from "./types.js";
-
-const RULE_INDEX = 20000;
-const FW_RULESET = "WAN_IN";
 
 interface UnifiHandle extends RouterHandle {
-  dnatId: string | null;
+  natId: string | null;
   firewallId: string | null;
 }
 
 function toUnifiHandle(h: RouterHandle): UnifiHandle {
   return {
-    dnatId: (h.dnatId as string | null | undefined) ?? null,
+    natId: (h.natId as string | null | undefined) ?? null,
     firewallId: (h.firewallId as string | null | undefined) ?? null,
   };
 }
 
-function dnatRuleFor(spec: PortForwardSpec, vpnInterface: string): Omit<DnatRule, "_id"> {
-  return {
-    name: `VPM: ${spec.label}`,
-    enabled: true,
-    pfwd_interface: vpnInterface,
-    src: "any",
-    dst_port: String(spec.vpnPort),
-    fwd: spec.destIp,
-    fwd_port: String(spec.destPort),
-    proto: spec.protocol,
-    log: false,
+type NatType = "DNAT";
+
+interface NatRule {
+  _id?: string;
+  enabled: boolean;
+  rule_index: number;
+  is_predefined: boolean;
+  description: string;
+  type: NatType;
+  ip_version: "IPV4";
+  in_interface: string;
+  protocol: string;
+  port: string;
+  source_filter: { filter_type: "NONE" };
+  destination_filter: {
+    filter_type: "ADDRESS_AND_PORT";
+    port: string;
+    invert_port: boolean;
+  };
+  ip_address: string;
+  setting_preference: "manual";
+  logging: boolean;
+  exclude: boolean;
+  pppoe_use_base_interface: boolean;
+}
+
+interface FirewallPolicy {
+  _id?: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+  action: "ALLOW";
+  create_allow_respond: boolean;
+  ip_version: "IPV4";
+  logging: boolean;
+  protocol: string;
+  connection_state_type: "ALL";
+  match_ip_sec: boolean;
+  schedule: { mode: "ALWAYS" };
+  source: {
+    zone_id: string;
+    match_mac: boolean;
+    port_matching_type: "ANY";
+    matching_target: "ANY";
+  };
+  destination: {
+    zone_id: string;
+    port_matching_type: "SPECIFIC";
+    port: string;
+    match_opposite_ports: boolean;
+    matching_target: "IP";
+    matching_target_type: "SPECIFIC";
+    ips: string[];
+    match_opposite_ips: boolean;
   };
 }
 
-function firewallRuleFor(spec: PortForwardSpec): Omit<FirewallRule, "_id"> {
+function natRuleFor(spec: PortForwardSpec, inInterfaceId: string): Omit<NatRule, "_id"> {
   return {
-    name: `VPM: Allow ${spec.label}`,
     enabled: true,
-    ruleset: FW_RULESET,
-    rule_index: RULE_INDEX,
-    action: "accept",
+    rule_index: 0,
+    is_predefined: false,
+    description: `VPM: ${spec.label}`,
+    type: "DNAT",
+    ip_version: "IPV4",
+    in_interface: inInterfaceId,
     protocol: spec.protocol,
-    src_firewallgroup_ids: [],
-    dst_address: spec.destIp,
-    dst_port: String(spec.destPort),
+    port: String(spec.destPort),
+    source_filter: { filter_type: "NONE" },
+    destination_filter: {
+      filter_type: "ADDRESS_AND_PORT",
+      port: String(spec.vpnPort),
+      invert_port: false,
+    },
+    ip_address: spec.destIp,
+    setting_preference: "manual",
     logging: false,
+    exclude: false,
+    pppoe_use_base_interface: false,
+  };
+}
+
+function firewallPolicyFor(
+  spec: PortForwardSpec,
+  sourceZoneId: string,
+  destinationZoneId: string
+): Omit<FirewallPolicy, "_id"> {
+  return {
+    name: `VPM: ${spec.label}`,
+    description: "",
+    enabled: true,
+    action: "ALLOW",
+    create_allow_respond: true,
+    ip_version: "IPV4",
+    logging: false,
+    protocol: spec.protocol,
+    connection_state_type: "ALL",
+    match_ip_sec: false,
+    schedule: { mode: "ALWAYS" },
+    source: {
+      zone_id: sourceZoneId,
+      match_mac: false,
+      port_matching_type: "ANY",
+      matching_target: "ANY",
+    },
+    destination: {
+      zone_id: destinationZoneId,
+      port_matching_type: "SPECIFIC",
+      port: String(spec.destPort),
+      match_opposite_ports: false,
+      matching_target: "IP",
+      matching_target_type: "SPECIFIC",
+      ips: [spec.destIp],
+      match_opposite_ips: false,
+    },
   };
 }
 
 export function createUnifiRouter(settings: RouterSettings): RouterClient {
-  const apiBase = `${settings.host}/proxy/network/api/s/default`;
+  const apiBase = `${settings.host}/proxy/network/v2/api/site/default`;
   let cookie = "";
   let csrfToken = "";
 
@@ -78,20 +163,21 @@ export function createUnifiRouter(settings: RouterSettings): RouterClient {
         const raw = await res.clone().text();
         if (raw) {
           try {
-            const parsed = JSON.parse(raw) as { meta?: { msg?: string; rc?: string } };
-            const msg = parsed.meta?.msg;
-            detail = msg ? ` — ${msg}` : ` — ${raw.slice(0, 500)}`;
+            const parsed = JSON.parse(raw) as { meta?: { msg?: string }; errorCode?: string; message?: string };
+            detail = parsed.meta?.msg ?? parsed.message ?? parsed.errorCode ?? raw.slice(0, 500);
+            detail = ` — ${detail}`;
           } catch {
             detail = ` — ${raw.slice(0, 500)}`;
           }
         }
       } catch {
-        /* ignore body read failure */
+        /* ignore */
       }
       throw new Error(
         `UniFi API error (${res.status} ${res.statusText}) on ${opts.method ?? "GET"} ${path}${detail}`
       );
     }
+    if (res.status === 204) return null;
     return res.json();
   }
 
@@ -115,56 +201,56 @@ export function createUnifiRouter(settings: RouterSettings): RouterClient {
     captureCsrf(res);
   }
 
-  async function createDnatRule(rule: Omit<DnatRule, "_id">): Promise<string> {
-    const body = (await request("/rest/nat", {
+  async function createNat(spec: PortForwardSpec): Promise<string> {
+    const body = (await request("/nat", {
       method: "POST",
-      body: JSON.stringify(rule),
-    })) as { data: DnatRule[] };
-    return body.data[0]._id!;
+      body: JSON.stringify(natRuleFor(spec, settings.inInterfaceId)),
+    })) as NatRule;
+    if (!body._id) throw new Error("UniFi created a NAT rule but returned no _id");
+    return body._id;
   }
 
-  async function updateDnatRule(id: string, rule: Partial<DnatRule>): Promise<void> {
-    await request(`/rest/nat/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(rule),
+  async function updateNat(id: string, spec: PortForwardSpec): Promise<void> {
+    const payload: NatRule = { ...natRuleFor(spec, settings.inInterfaceId), _id: id };
+    await request(`/nat/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  }
+
+  async function deleteNat(id: string): Promise<void> {
+    await request(`/nat/${id}`, { method: "DELETE" });
+  }
+
+  async function getNat(id: string): Promise<NatRule | null> {
+    const body = (await request(`/nat/${id}`)) as NatRule | null;
+    return body;
+  }
+
+  async function createFirewall(spec: PortForwardSpec): Promise<string> {
+    const body = (await request("/firewall-policies", {
+      method: "POST",
+      body: JSON.stringify(firewallPolicyFor(spec, settings.sourceZoneId, settings.destinationZoneId)),
+    })) as FirewallPolicy;
+    if (!body._id) throw new Error("UniFi created a firewall policy but returned no _id");
+    return body._id;
+  }
+
+  async function updateFirewall(id: string, spec: PortForwardSpec): Promise<void> {
+    const payload: FirewallPolicy = {
+      ...firewallPolicyFor(spec, settings.sourceZoneId, settings.destinationZoneId),
+      _id: id,
+    };
+    await request(`/firewall-policies/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+  }
+
+  async function deleteFirewall(id: string): Promise<void> {
+    await request(`/firewall-policies/batch-delete`, {
+      method: "POST",
+      body: JSON.stringify([id]),
     });
   }
 
-  async function deleteDnatRule(id: string): Promise<void> {
-    await request(`/rest/nat/${id}`, { method: "DELETE" });
-  }
-
-  async function getDnatRule(id: string): Promise<DnatRule | null> {
-    const body = (await request(`/rest/nat/${id}`)) as { data: DnatRule[] } | null;
-    if (!body) return null;
-    return body.data[0] ?? null;
-  }
-
-  async function createFirewallRule(rule: Omit<FirewallRule, "_id">): Promise<string> {
-    const body = (await request("/rest/firewallrule", {
-      method: "POST",
-      body: JSON.stringify(rule),
-    })) as { data: FirewallRule[] };
-    return body.data[0]._id!;
-  }
-
-  async function updateFirewallRule(id: string, rule: Partial<FirewallRule>): Promise<void> {
-    await request(`/rest/firewallrule/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(rule),
-    });
-  }
-
-  async function deleteFirewallRule(id: string): Promise<void> {
-    await request(`/rest/firewallrule/${id}`, { method: "DELETE" });
-  }
-
-  async function getFirewallRule(id: string): Promise<FirewallRule | null> {
-    const body = (await request(`/rest/firewallrule/${id}`)) as {
-      data: FirewallRule[];
-    } | null;
-    if (!body) return null;
-    return body.data[0] ?? null;
+  async function getFirewall(id: string): Promise<FirewallPolicy | null> {
+    const body = (await request(`/firewall-policies/${id}`)) as FirewallPolicy | null;
+    return body;
   }
 
   return {
@@ -186,55 +272,50 @@ export function createUnifiRouter(settings: RouterSettings): RouterClient {
 
     async ensurePortForward(spec: PortForwardSpec): Promise<RouterHandle> {
       await login();
-      const dnatId = await createDnatRule(dnatRuleFor(spec, settings.vpnInterface));
-      const firewallId = await createFirewallRule(firewallRuleFor(spec));
-      return { dnatId, firewallId } satisfies UnifiHandle;
+      const natId = await createNat(spec);
+      let firewallId: string | null = null;
+      try {
+        firewallId = await createFirewall(spec);
+      } catch (err) {
+        // If firewall creation fails, roll back the NAT rule so we don't leak it
+        try { await deleteNat(natId); } catch { /* best effort */ }
+        throw err;
+      }
+      return { natId, firewallId } satisfies UnifiHandle;
     },
 
     async updatePortForward(handle: RouterHandle, spec: PortForwardSpec): Promise<RouterHandle> {
       const h = toUnifiHandle(handle);
       await login();
-      if (h.dnatId) {
-        await updateDnatRule(h.dnatId, {
-          dst_port: String(spec.vpnPort),
-          fwd: spec.destIp,
-          fwd_port: String(spec.destPort),
-          proto: spec.protocol,
-        });
-      }
-      if (h.firewallId) {
-        await updateFirewallRule(h.firewallId, {
-          dst_address: spec.destIp,
-          dst_port: String(spec.destPort),
-          protocol: spec.protocol,
-        });
-      }
+      if (h.natId) await updateNat(h.natId, spec);
+      if (h.firewallId) await updateFirewall(h.firewallId, spec);
       return h;
     },
 
     async deletePortForward(handle: RouterHandle): Promise<void> {
       const h = toUnifiHandle(handle);
       try { await login(); } catch { /* best effort */ }
-      if (h.dnatId) {
-        try { await deleteDnatRule(h.dnatId); } catch { /* best effort */ }
+      if (h.natId) {
+        try { await deleteNat(h.natId); } catch { /* best effort */ }
       }
       if (h.firewallId) {
-        try { await deleteFirewallRule(h.firewallId); } catch { /* best effort */ }
+        try { await deleteFirewall(h.firewallId); } catch { /* best effort */ }
       }
     },
 
     async repairPortForward(handle: RouterHandle, spec: PortForwardSpec): Promise<RouterHandle> {
       const h = toUnifiHandle(handle);
-      let dnatId = h.dnatId;
+      await login();
+      let natId = h.natId;
       let firewallId = h.firewallId;
 
-      if (!dnatId || (await getDnatRule(dnatId)) === null) {
-        dnatId = await createDnatRule(dnatRuleFor(spec, settings.vpnInterface));
+      if (!natId || (await getNat(natId)) === null) {
+        natId = await createNat(spec);
       }
-      if (!firewallId || (await getFirewallRule(firewallId)) === null) {
-        firewallId = await createFirewallRule(firewallRuleFor(spec));
+      if (!firewallId || (await getFirewall(firewallId)) === null) {
+        firewallId = await createFirewall(spec);
       }
-      return { dnatId, firewallId } satisfies UnifiHandle;
+      return { natId, firewallId } satisfies UnifiHandle;
     },
   };
 }

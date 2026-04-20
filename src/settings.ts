@@ -15,7 +15,9 @@ export const routerSettingsSchema = z.object({
   host: z.string().url(),
   username: z.string().min(1),
   password: z.string().min(1),
-  vpnInterface: z.string().min(1),
+  inInterfaceId: z.string().min(1),
+  sourceZoneId: z.string().min(1),
+  destinationZoneId: z.string().min(1),
 });
 
 export const appSettingsSchema = z.object({

@@ -48,9 +48,23 @@ export function setupView(): string {
         <label for="router-password">Password</label>
         <input id="router-password" name="password" type="password" autocomplete="new-password" />
       </div>
+      <div class="info-box">
+        The three IDs below come from the UniFi UI. Open the UniFi NAT Rules
+        page, click Create, open browser DevTools → Network, and copy the
+        <code>in_interface</code>, <code>source.zone_id</code> and
+        <code>destination.zone_id</code> values from the outgoing request body.
+      </div>
       <div class="form-group">
-        <label for="router-vpnInterface">VPN interface</label>
-        <input id="router-vpnInterface" name="vpnInterface" type="text" value="wg0" />
+        <label for="router-inInterfaceId">VPN interface ID</label>
+        <input id="router-inInterfaceId" name="inInterfaceId" type="text" placeholder="655ca9ef64c8185504aaadd9" />
+      </div>
+      <div class="form-group">
+        <label for="router-sourceZoneId">Firewall source zone ID</label>
+        <input id="router-sourceZoneId" name="sourceZoneId" type="text" placeholder="67b0806d66b7ef016bcefb31" />
+      </div>
+      <div class="form-group">
+        <label for="router-destinationZoneId">Firewall destination zone ID</label>
+        <input id="router-destinationZoneId" name="destinationZoneId" type="text" placeholder="67b0806d66b7ef016bcefb30" />
       </div>
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveRouter()">Save router</button>
@@ -81,7 +95,9 @@ export function setupView(): string {
           host: document.getElementById('router-host').value.trim(),
           username: document.getElementById('router-username').value.trim(),
           password: document.getElementById('router-password').value,
-          vpnInterface: document.getElementById('router-vpnInterface').value.trim(),
+          inInterfaceId: document.getElementById('router-inInterfaceId').value.trim(),
+          sourceZoneId: document.getElementById('router-sourceZoneId').value.trim(),
+          destinationZoneId: document.getElementById('router-destinationZoneId').value.trim(),
         };
       }
       async function postJson(url, method, body) {

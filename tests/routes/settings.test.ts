@@ -58,7 +58,9 @@ describe("settings API", () => {
         host: "https://1.2.3.4",
         username: "admin",
         password: "correct horse battery staple",
-        vpnInterface: "wg0",
+        inInterfaceId: "iface-1",
+        sourceZoneId: "zone-src",
+        destinationZoneId: "zone-dst",
       }),
     });
     expect(put.status).toBe(200);
@@ -70,7 +72,9 @@ describe("settings API", () => {
       type: "unifi",
       host: "https://1.2.3.4",
       username: "admin",
-      vpnInterface: "wg0",
+      inInterfaceId: "iface-1",
+      sourceZoneId: "zone-src",
+      destinationZoneId: "zone-dst",
     });
     expect(body).not.toHaveProperty("password");
   });

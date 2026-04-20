@@ -17,7 +17,9 @@ export function settingsView(props: SettingsViewProps): string {
   const routerType = props.router?.type ?? "unifi";
   const routerHost = props.router?.host ?? "";
   const routerUser = props.router?.username ?? "";
-  const routerIface = props.router?.vpnInterface ?? "wg0";
+  const routerInIface = props.router?.inInterfaceId ?? "";
+  const routerSrcZone = props.router?.sourceZoneId ?? "";
+  const routerDstZone = props.router?.destinationZoneId ?? "";
   const routerConfigured = props.router !== null;
 
   const app = props.app;
@@ -77,9 +79,23 @@ export function settingsView(props: SettingsViewProps): string {
         <label for="router-password">Password</label>
         <input id="router-password" name="password" type="password" placeholder="${routerConfigured ? "•••••• (stored, leave blank to keep)" : ""}" autocomplete="new-password" />
       </div>
+      <div class="info-box">
+        The three IDs below come from the UniFi UI. Create a test NAT rule +
+        firewall policy in the UniFi UI while DevTools → Network is open, then
+        copy <code>in_interface</code>, <code>source.zone_id</code>, and
+        <code>destination.zone_id</code> from the outgoing request body.
+      </div>
       <div class="form-group">
-        <label for="router-vpnInterface">VPN interface</label>
-        <input id="router-vpnInterface" name="vpnInterface" type="text" value="${escHtml(routerIface)}" placeholder="wg0" />
+        <label for="router-inInterfaceId">VPN interface ID (NAT <code>in_interface</code>)</label>
+        <input id="router-inInterfaceId" name="inInterfaceId" type="text" value="${escHtml(routerInIface)}" placeholder="655ca9ef64c8185504aaadd9" />
+      </div>
+      <div class="form-group">
+        <label for="router-sourceZoneId">Firewall source zone ID (e.g. External/VPN)</label>
+        <input id="router-sourceZoneId" name="sourceZoneId" type="text" value="${escHtml(routerSrcZone)}" placeholder="67b0806d66b7ef016bcefb31" />
+      </div>
+      <div class="form-group">
+        <label for="router-destinationZoneId">Firewall destination zone ID (e.g. Internal/LAN)</label>
+        <input id="router-destinationZoneId" name="destinationZoneId" type="text" value="${escHtml(routerDstZone)}" placeholder="67b0806d66b7ef016bcefb30" />
       </div>
       <div class="form-actions">
         <button type="button" class="btn primary" onclick="saveRouter()">Save</button>
@@ -109,14 +125,7 @@ export function settingsView(props: SettingsViewProps): string {
     </form>
 
     <script>
-      ${settingsScript({
-        vpnConfigured,
-        routerConfigured,
-        existingVpnInternalIp: vpnInternalIp,
-        existingRouterHost: routerHost,
-        existingRouterUser: routerUser,
-        existingRouterIface: routerIface,
-      })}
+      ${settingsScript({ vpnConfigured, routerConfigured })}
     </script>
   `;
 }
@@ -124,10 +133,6 @@ export function settingsView(props: SettingsViewProps): string {
 function settingsScript(args: {
   vpnConfigured: boolean;
   routerConfigured: boolean;
-  existingVpnInternalIp: string;
-  existingRouterHost: string;
-  existingRouterUser: string;
-  existingRouterIface: string;
 }): string {
   return `
     function show(id, msg, ok) {
@@ -156,7 +161,9 @@ function settingsScript(args: {
         host: document.getElementById('router-host').value.trim(),
         username: document.getElementById('router-username').value.trim(),
         password: pw,
-        vpnInterface: document.getElementById('router-vpnInterface').value.trim(),
+        inInterfaceId: document.getElementById('router-inInterfaceId').value.trim(),
+        sourceZoneId: document.getElementById('router-sourceZoneId').value.trim(),
+        destinationZoneId: document.getElementById('router-destinationZoneId').value.trim(),
       };
     }
     async function postJson(url, method, body) {
