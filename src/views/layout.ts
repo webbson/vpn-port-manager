@@ -238,7 +238,7 @@ export function layout(title: string, content: string): string {
       margin-bottom: 6px;
     }
 
-    input[type=text], input[type=number], select, textarea {
+    input[type=text], input[type=password], input[type=number], select, textarea {
       width: 100%;
       background: #0d1117;
       border: 1px solid #30363d;
@@ -250,7 +250,7 @@ export function layout(title: string, content: string): string {
       transition: border-color 0.15s;
     }
 
-    input[type=text]:focus, input[type=number]:focus, select:focus, textarea:focus {
+    input[type=text]:focus, input[type=password]:focus, input[type=number]:focus, select:focus, textarea:focus {
       border-color: #58a6ff;
     }
 

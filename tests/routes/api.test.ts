@@ -5,6 +5,7 @@ import type { Db } from "../../src/db.js";
 import type { VpnProvider } from "../../src/providers/types.js";
 import type { RouterClient } from "../../src/routers/types.js";
 import { createApiRoutes } from "../../src/routes/api.js";
+import { clearExternalIpCache } from "../../src/services/external-ip.js";
 
 let portCounter = 60000;
 
@@ -52,6 +53,17 @@ describe("API routes", () => {
     router = mockRouter();
     app = new Hono();
     app.route("/api", createApiRoutes({ db, provider, router }));
+    clearExternalIpCache();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ip: "203.0.113.1" }),
+        } as unknown as Response)
+      )
+    );
   });
 
   it("GET /api/health returns ok", async () => {
@@ -131,6 +143,7 @@ describe("API routes", () => {
     const body = (await res.json()) as {
       provider: { connected: boolean; name: string; activePorts: number; maxPorts: number };
       router: { connected: boolean; name: string };
+      externalIp: string | null;
       mappings: { total: number; active: number };
     };
 
@@ -140,6 +153,7 @@ describe("API routes", () => {
     expect(body.provider.maxPorts).toBe(5);
     expect(body.router.connected).toBe(true);
     expect(body.router.name).toBe("unifi");
+    expect(body.externalIp).toBe("203.0.113.1");
     expect(body.mappings.total).toBe(0);
   });
 

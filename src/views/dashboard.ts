@@ -12,6 +12,7 @@ export interface DashboardStatus {
     connected: boolean;
     name: string;
   };
+  externalIp: string | null;
 }
 
 export type MappingWithHooks = PortMapping & { hooks: Hook[] };
@@ -103,6 +104,14 @@ export function dashboardView(mappings: MappingWithHooks[], status: DashboardSta
           <span class="health-dot ${routerDot}"></span>
           ${routerLabel}
         </div>
+      </div>
+      <div class="card">
+        <h3>External IP</h3>
+        ${status.externalIp
+          ? `<div class="health"><span class="health-dot ok"></span><span class="port-num">${escHtml(status.externalIp)}</span></div>
+             <div style="margin-top:10px;font-size:13px;color:#8b949e;">as seen by the internet from this container</div>`
+          : `<div class="health"><span class="health-dot err"></span>Unavailable</div>
+             <div style="margin-top:10px;font-size:13px;color:#8b949e;">lookup failed — VPN may be down</div>`}
       </div>
     </div>
 

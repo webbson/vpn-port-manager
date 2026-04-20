@@ -4,6 +4,7 @@ import type { VpnProvider } from '../providers/types.js';
 import type { PortForwardSpec, Protocol, RouterClient } from '../routers/types.js';
 import { layout } from '../views/layout.js';
 import { dashboardView, type MappingWithHooks, type DashboardStatus } from '../views/dashboard.js';
+import { getExternalIp } from '../services/external-ip.js';
 import { createView } from '../views/create.js';
 import { editView } from '../views/edit.js';
 import { logsView } from '../views/logs.js';
@@ -54,7 +55,10 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
       providerConnected = true;
     } catch { /* ignore */ }
 
-    const routerTest = await router.testConnection();
+    const [routerTest, externalIp] = await Promise.all([
+      router.testConnection(),
+      getExternalIp(),
+    ]);
 
     const status: DashboardStatus = {
       provider: {
@@ -64,6 +68,7 @@ export function createUiRoutes(config: UiRoutesConfig): Hono {
         maxPorts: provider.maxPorts,
       },
       router: { connected: routerTest.ok, name: router.name },
+      externalIp: externalIp.ip,
     };
 
     return c.html(layout('Dashboard', dashboardView(withHooks, status)));

@@ -5,6 +5,7 @@ import type { VpnProvider } from "../providers/types.js";
 import type { PortForwardSpec, Protocol, RouterClient } from "../routers/types.js";
 import { createHookRunner } from "../hooks/runner.js";
 import type { HookPayload } from "../hooks/types.js";
+import { getExternalIp } from "../services/external-ip.js";
 
 export interface ApiRoutesConfig {
   db: Db;
@@ -284,7 +285,10 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
       providerConnected = false;
     }
 
-    const routerTest = await router.testConnection();
+    const [routerTest, externalIp] = await Promise.all([
+      router.testConnection(),
+      getExternalIp(),
+    ]);
 
     const allMappings = db.listMappings();
     const activeMappings = allMappings.filter((m) => m.status === "active");
@@ -303,6 +307,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
         connected: routerTest.ok,
         name: router.name,
       },
+      externalIp: externalIp.ip,
       mappings: {
         total: allMappings.length,
         active: activeMappings.length,
