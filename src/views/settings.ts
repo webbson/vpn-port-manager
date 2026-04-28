@@ -31,6 +31,7 @@ const CATEGORY_LABELS: Record<NotificationCategory, string> = {
   "mapping.create_failed": "Mapping create failed (router)",
   "mapping.update_failed": "Mapping update failed (router)",
   "mapping.delete_failed": "Mapping delete had errors",
+  "ip.changed": "Public IP changed",
 };
 
 export function settingsView(props: SettingsViewProps): string {

@@ -1,9 +1,20 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createDb } from "../src/db.js";
 import type { Db } from "../src/db.js";
 import type { VpnProvider } from "../src/providers/types.js";
 import type { RouterClient } from "../src/routers/types.js";
 import { createSyncWatchdog } from "../src/sync.js";
+import { clearExternalIpCache } from "../src/services/external-ip.js";
+
+function stubIpify(ip: string | null): void {
+  const fetchMock = vi.fn().mockImplementation(async () => {
+    if (ip === null) {
+      return { ok: false, status: 503, json: async () => ({}) };
+    }
+    return { ok: true, status: 200, json: async () => ({ ip }) };
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
 
 function mockProvider(ports: { port: number; expiresAt: number }[] = []): VpnProvider {
   return {
@@ -33,6 +44,12 @@ describe("SyncWatchdog", () => {
 
   beforeEach(() => {
     db = createDb(":memory:");
+    clearExternalIpCache();
+    stubIpify("1.2.3.4");
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("re-creates ports missing from provider (not expired)", async () => {
@@ -173,5 +190,95 @@ describe("SyncWatchdog", () => {
     expect(router.repairPortForward).toHaveBeenCalled();
     const mapping = db.getMapping(mappingId)!;
     expect(mapping.routerHandle).toEqual({ dnatId: "dnat-fresh", firewallId: "fw-old" });
+  });
+
+  describe("external IP change detection", () => {
+    function makeNotifier() {
+      return { emit: vi.fn() };
+    }
+
+    it("first observation: stores IP, does not notify", async () => {
+      stubIpify("1.2.3.4");
+      const notifier = makeNotifier();
+      let stored: string | null = null;
+      const watchdog = createSyncWatchdog({
+        db,
+        provider: mockProvider(),
+        router: mockRouter(),
+        renewThresholdDays: 7,
+        notifier: notifier as never,
+        getLastExternalIp: () => stored,
+        setLastExternalIp: (ip) => { stored = ip; },
+      });
+      await watchdog.runOnce();
+      expect(stored).toBe("1.2.3.4");
+      expect(notifier.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ category: "ip.changed" })
+      );
+    });
+
+    it("same IP: no notification, no write", async () => {
+      stubIpify("1.2.3.4");
+      const notifier = makeNotifier();
+      const setIp = vi.fn();
+      const watchdog = createSyncWatchdog({
+        db,
+        provider: mockProvider(),
+        router: mockRouter(),
+        renewThresholdDays: 7,
+        notifier: notifier as never,
+        getLastExternalIp: () => "1.2.3.4",
+        setLastExternalIp: setIp,
+      });
+      await watchdog.runOnce();
+      expect(setIp).not.toHaveBeenCalled();
+      expect(notifier.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ category: "ip.changed" })
+      );
+    });
+
+    it("changed IP: emits ip.changed and updates stored value", async () => {
+      stubIpify("5.6.7.8");
+      const notifier = makeNotifier();
+      const setIp = vi.fn();
+      const watchdog = createSyncWatchdog({
+        db,
+        provider: mockProvider(),
+        router: mockRouter(),
+        renewThresholdDays: 7,
+        notifier: notifier as never,
+        getLastExternalIp: () => "1.2.3.4",
+        setLastExternalIp: setIp,
+      });
+      await watchdog.runOnce();
+      expect(setIp).toHaveBeenCalledWith("5.6.7.8");
+      expect(notifier.emit).toHaveBeenCalledWith(
+        expect.objectContaining({
+          category: "ip.changed",
+          severity: "info",
+          data: { oldIp: "1.2.3.4", newIp: "5.6.7.8" },
+        })
+      );
+    });
+
+    it("fetch failed: no emit, stored value untouched", async () => {
+      stubIpify(null);
+      const notifier = makeNotifier();
+      const setIp = vi.fn();
+      const watchdog = createSyncWatchdog({
+        db,
+        provider: mockProvider(),
+        router: mockRouter(),
+        renewThresholdDays: 7,
+        notifier: notifier as never,
+        getLastExternalIp: () => "1.2.3.4",
+        setLastExternalIp: setIp,
+      });
+      await watchdog.runOnce();
+      expect(setIp).not.toHaveBeenCalled();
+      expect(notifier.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ category: "ip.changed" })
+      );
+    });
   });
 });

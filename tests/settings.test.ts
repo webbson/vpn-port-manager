@@ -131,6 +131,18 @@ describe("SettingsService", () => {
     expect(svc.isConfigured()).toBe(false);
   });
 
+  it("round-trips lastExternalIp (plaintext)", () => {
+    const svc = createSettingsService(db, KEY);
+    expect(svc.getLastExternalIp()).toBeNull();
+    svc.setLastExternalIp("1.2.3.4");
+    expect(svc.getLastExternalIp()).toBe("1.2.3.4");
+    const row = db.getSetting("lastExternalIp")!;
+    expect(row.encrypted).toBe(false);
+    expect(JSON.parse(row.valueJson)).toBe("1.2.3.4");
+    svc.setLastExternalIp("5.6.7.8");
+    expect(svc.getLastExternalIp()).toBe("5.6.7.8");
+  });
+
   it("rejects invalid settings at the boundary", () => {
     const svc = createSettingsService(db, KEY);
     expect(() =>

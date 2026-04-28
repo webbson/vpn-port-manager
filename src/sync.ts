@@ -7,6 +7,7 @@ import type { HookPayload } from "./hooks/types.js";
 import type { PortMapping } from "./db.js";
 import type { NotifierDispatcher } from "./notifications/dispatcher.js";
 import { createNoopDispatcher } from "./notifications/dispatcher.js";
+import { getExternalIp } from "./services/external-ip.js";
 
 export interface SyncConfig {
   db: Db;
@@ -14,6 +15,8 @@ export interface SyncConfig {
   router: RouterClient;
   renewThresholdDays: number;
   notifier?: NotifierDispatcher;
+  getLastExternalIp?: () => string | null;
+  setLastExternalIp?: (ip: string) => void;
 }
 
 export interface SyncWatchdog {
@@ -40,6 +43,8 @@ function specFromMapping(m: PortMapping): PortForwardSpec {
 export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   const { db, provider, router, renewThresholdDays } = config;
   const notifier: NotifierDispatcher = config.notifier ?? createNoopDispatcher();
+  const getLastExternalIp = config.getLastExternalIp ?? (() => null);
+  const setLastExternalIp = config.setLastExternalIp ?? (() => {});
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
 
@@ -294,8 +299,31 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
     }
   }
 
+  async function checkExternalIpChange(): Promise<void> {
+    const result = await getExternalIp();
+    const newIp = result.ip;
+    if (!newIp) return;
+    const oldIp = getLastExternalIp();
+    if (oldIp === null) {
+      setLastExternalIp(newIp);
+      return;
+    }
+    if (oldIp === newIp) return;
+    setLastExternalIp(newIp);
+    db.logSync("ip_change", null, { oldIp, newIp });
+    notifier.emit({
+      category: "ip.changed",
+      severity: "info",
+      title: "Public IP changed",
+      message: `Public IP changed from ${oldIp} to ${newIp}.`,
+      data: { oldIp, newIp },
+    });
+  }
+
   return {
     async runOnce(): Promise<void> {
+      await checkExternalIpChange();
+
       try {
         await router.login();
       } catch (err: unknown) {

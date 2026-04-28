@@ -58,10 +58,12 @@ export interface SettingsService {
   getRouter(): RouterSettings | null;
   getApp(): AppSettings;
   getNotifications(): NotificationsSettings;
+  getLastExternalIp(): string | null;
   setVpn(v: VpnSettings): void;
   setRouter(r: RouterSettings): void;
   setApp(a: AppSettings): void;
   setNotifications(n: NotificationsSettings): void;
+  setLastExternalIp(ip: string): void;
   isConfigured(): boolean;
   getIssues(): SettingsIssues;
 }
@@ -141,10 +143,22 @@ export function createSettingsService(db: Db, appSecretKey: string): SettingsSer
       }
     },
 
+    getLastExternalIp(): string | null {
+      const row = db.getSetting("lastExternalIp");
+      if (!row) return null;
+      try {
+        const parsed = JSON.parse(row.valueJson);
+        return typeof parsed === "string" && parsed.length > 0 ? parsed : null;
+      } catch {
+        return null;
+      }
+    },
+
     setVpn: (v) => writeEncrypted("vpn", vpnSettingsSchema.parse(v)),
     setRouter: (r) => writeEncrypted("router", routerSettingsSchema.parse(r)),
     setApp: (a) => writePlain("app", appSettingsSchema.parse(a)),
     setNotifications: (n) => writeEncrypted("notifications", notificationsSettingsSchema.parse(n)),
+    setLastExternalIp: (ip: string) => writePlain("lastExternalIp", ip),
 
     isConfigured(): boolean {
       return vpnRead().status === "ok" && routerRead().status === "ok";

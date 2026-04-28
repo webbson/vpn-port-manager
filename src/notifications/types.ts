@@ -8,6 +8,7 @@ export const NOTIFICATION_CATEGORIES = [
   "mapping.create_failed",
   "mapping.update_failed",
   "mapping.delete_failed",
+  "ip.changed",
 ] as const;
 
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];

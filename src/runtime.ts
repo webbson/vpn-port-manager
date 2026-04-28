@@ -80,6 +80,8 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       router,
       renewThresholdDays: app.renewThresholdDays,
       notifier: dispatcher,
+      getLastExternalIp: () => settings.getLastExternalIp(),
+      setLastExternalIp: (ip: string) => settings.setLastExternalIp(ip),
     });
     watchdog.start(app.syncIntervalMinutes * 60_000);
     watchdog.runOnce().catch((err: unknown) => {
