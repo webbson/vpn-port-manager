@@ -22,6 +22,7 @@ export interface Runtime {
   reloadRouter(): void;
   reloadApp(): void;
   reloadNotifications(): void;
+  triggerRouterCheck(): void;
   stop(): void;
 }
 
@@ -136,6 +137,9 @@ export function createRuntime(config: RuntimeConfig): Runtime {
       // Watchdog captures the dispatcher reference at construction time, so we
       // need to rebuild it to pick up the new one.
       startOrRestartWatchdog();
+    },
+    triggerRouterCheck(): void {
+      watchdog?.triggerRouterCheck();
     },
     stop(): void {
       watchdog?.stop();

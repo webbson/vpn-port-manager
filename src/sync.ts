@@ -23,6 +23,7 @@ export interface SyncWatchdog {
   runOnce(): Promise<void>;
   start(intervalMs: number): void;
   stop(): void;
+  triggerRouterCheck(): void;
 }
 
 function toRouterProtocol(p: string): Protocol {
@@ -47,6 +48,32 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   const setLastExternalIp = config.setLastExternalIp ?? (() => {});
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
+  let routerCheckPending = true;
+  let tickLoggedIn = false;
+  let tickLoginFailed = false;
+
+  async function ensureLogin(): Promise<boolean> {
+    if (tickLoggedIn) return true;
+    if (tickLoginFailed) return false;
+    try {
+      await router.login();
+      tickLoggedIn = true;
+      return true;
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      tickLoginFailed = true;
+      console.error(`[sync] Router login failed: ${message}`);
+      db.logSync("error", null, { step: "login", error: message });
+      notifier.emit({
+        category: "provider.login_failed",
+        severity: "error",
+        title: "Router login failed",
+        message: `Sync watchdog could not log in to the router: ${message}`,
+        data: { error: message },
+      });
+      return false;
+    }
+  }
 
   async function fireHooks(mapping: PortMapping, payload: HookPayloadBase): Promise<void> {
     await fireHooksForMapping(db, hookRunner, mapping.id, payload);
@@ -64,8 +91,11 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
 
       if (mapping.expiresAt <= nowSeconds) {
         db.updateMapping(mapping.id, { status: "expired" });
+        routerCheckPending = true;
 
-        try { await router.deletePortForward(mapping.routerHandle as RouterHandle); } catch {}
+        if (await ensureLogin()) {
+          try { await router.deletePortForward(mapping.routerHandle as RouterHandle); } catch {}
+        }
 
         await fireHooks(mapping, {
           mappingId: mapping.id,
@@ -103,16 +133,19 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           expiresAt: newExpiresAt,
           status: "active",
         });
+        routerCheckPending = true;
 
-        const updated = db.getMapping(mapping.id)!;
-        try {
-          const handle = await router.updatePortForward(
-            updated.routerHandle as RouterHandle,
-            specFromMapping(updated)
-          );
-          db.updateMapping(mapping.id, { routerHandle: handle });
-        } catch {
-          // router update best-effort; next tick runs repair
+        if (await ensureLogin()) {
+          const updated = db.getMapping(mapping.id)!;
+          try {
+            const handle = await router.updatePortForward(
+              updated.routerHandle as RouterHandle,
+              specFromMapping(updated)
+            );
+            db.updateMapping(mapping.id, { routerHandle: handle });
+          } catch {
+            // router update best-effort; next tick runs repair
+          }
         }
 
         await fireHooks(mapping, {
@@ -182,15 +215,18 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
         });
 
         if (newPort !== oldPort) {
-          const updated = db.getMapping(mapping.id)!;
-          try {
-            const handle = await router.updatePortForward(
-              updated.routerHandle as RouterHandle,
-              specFromMapping(updated)
-            );
-            db.updateMapping(mapping.id, { routerHandle: handle });
-          } catch {
-            // best-effort
+          routerCheckPending = true;
+          if (await ensureLogin()) {
+            const updated = db.getMapping(mapping.id)!;
+            try {
+              const handle = await router.updatePortForward(
+                updated.routerHandle as RouterHandle,
+                specFromMapping(updated)
+              );
+              db.updateMapping(mapping.id, { routerHandle: handle });
+            } catch {
+              // best-effort; routerCheckPending ensures next tick repairs
+            }
           }
         }
 
@@ -224,6 +260,7 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   }
 
   async function checkRouterRules(): Promise<void> {
+    if (!(await ensureLogin())) return;
     const mappings = db.listMappings().filter((m) => m.status === "active");
     for (const mapping of mappings) {
       try {
@@ -322,28 +359,21 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
 
   return {
     async runOnce(): Promise<void> {
+      tickLoggedIn = false;
+      tickLoginFailed = false;
+
       await checkExternalIpChange();
-
-      try {
-        await router.login();
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`[sync] Router login failed: ${message}`);
-        db.logSync("error", null, { step: "login", error: message });
-        notifier.emit({
-          category: "provider.login_failed",
-          severity: "error",
-          title: "Router login failed",
-          message: `Sync watchdog could not log in to the router: ${message}`,
-          data: { error: message },
-        });
-        return;
-      }
-
       await checkProviderSync();
       await checkRenewals();
-      await checkRouterRules();
+      if (routerCheckPending) {
+        routerCheckPending = false;
+        await checkRouterRules();
+      }
       await retryFailedHooks();
+    },
+
+    triggerRouterCheck(): void {
+      routerCheckPending = true;
     },
 
     start(intervalMs: number): void {

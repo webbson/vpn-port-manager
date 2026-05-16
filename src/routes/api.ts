@@ -160,6 +160,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
     });
 
     db.logSync("create", mappingId, { vpnPort: mapping.vpnPort, label: mapping.label });
+    runtime.triggerRouterCheck();
 
     const hooks = db.listHooks(mappingId);
     return c.json({ mapping: { ...mapping, hooks } }, 201);
@@ -226,6 +227,7 @@ export function createApiRoutes(config: ApiRoutesConfig): Hono {
 
     const mapping = db.getMapping(id)!;
     const hooks = db.listHooks(id);
+    runtime.triggerRouterCheck();
     return c.json({ mapping: { ...mapping, hooks } });
   });
 
