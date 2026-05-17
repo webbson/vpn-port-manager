@@ -140,6 +140,14 @@ function firewallPolicyFor(
   };
 }
 
+const FETCH_TIMEOUT_MS = 10_000;
+
+function fetchWithTimeout(url: string, opts: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  return fetch(url, { ...opts, signal: controller.signal }).finally(() => clearTimeout(id));
+}
+
 export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
   const apiBase = `${settings.host}/proxy/network/v2/api/site/default`;
   let cookie = "";
@@ -150,7 +158,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
     if (updated) csrfToken = updated;
   }
 
-  async function request(path: string, opts: RequestInit = {}): Promise<unknown> {
+  async function request(path: string, opts: RequestInit = {}, retried = false): Promise<unknown> {
     const url = `${apiBase}${path}`;
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -158,9 +166,13 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
       ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       ...(opts.headers as Record<string, string> | undefined),
     };
-    const res = await fetch(url, { ...opts, headers });
+    const res = await fetchWithTimeout(url, { ...opts, headers });
     captureCsrf(res);
     if (res.status === 404) return null;
+    if (res.status === 401 && !retried) {
+      await login();
+      return request(path, opts, true);
+    }
     if (!res.ok) {
       let detail = "";
       try {
@@ -186,7 +198,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
   }
 
   async function login(): Promise<void> {
-    const res = await fetch(`${settings.host}/api/auth/login`, {
+    const res = await fetchWithTimeout(`${settings.host}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -203,6 +215,12 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
       cookie = match ? `TOKEN=${match[1]}` : setCookie.split(";")[0];
     }
     captureCsrf(res);
+  }
+
+  // Only login if no session exists. When sync.ts calls router.login() explicitly,
+  // subsequent operations in the same tick reuse that session.
+  async function loginIfNeeded(): Promise<void> {
+    if (!cookie) await login();
   }
 
   // UniFi v2 requires rule_index to be unique across all NAT rules. Fetch the
@@ -296,7 +314,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
     },
 
     async ensurePortForward(spec: PortForwardSpec): Promise<RouterHandle> {
-      await login();
+      await loginIfNeeded();
       const natId = await createNat(spec);
       let firewallId: string | null = null;
       try {
@@ -311,7 +329,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
 
     async updatePortForward(handle: RouterHandle, spec: PortForwardSpec): Promise<RouterHandle> {
       const h = toUnifiHandle(handle);
-      await login();
+      await loginIfNeeded();
       if (h.natId) await updateNat(h.natId, spec);
       if (h.firewallId) await updateFirewall(h.firewallId, spec);
       return h;
@@ -319,7 +337,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
 
     async deletePortForward(handle: RouterHandle): Promise<void> {
       const h = toUnifiHandle(handle);
-      try { await login(); } catch { /* best effort */ }
+      try { await loginIfNeeded(); } catch { /* best effort */ }
       if (h.natId) {
         try { await deleteNat(h.natId); } catch { /* best effort */ }
       }
@@ -330,7 +348,7 @@ export function createUnifiRouter(settings: UnifiRouterSettings): RouterClient {
 
     async repairPortForward(handle: RouterHandle, spec: PortForwardSpec): Promise<RouterHandle> {
       const h = toUnifiHandle(handle);
-      await login();
+      await loginIfNeeded();
       let natId = h.natId;
       let firewallId = h.firewallId;
 

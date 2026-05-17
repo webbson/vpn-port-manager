@@ -49,6 +49,7 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
   const hookRunner = createHookRunner();
   let intervalHandle: ReturnType<typeof setInterval> | null = null;
   let routerCheckPending = true;
+  let running = false;
   let tickLoggedIn = false;
   let tickLoginFailed = false;
 
@@ -359,17 +360,23 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
 
   return {
     async runOnce(): Promise<void> {
-      tickLoggedIn = false;
-      tickLoginFailed = false;
+      if (running) return;
+      running = true;
+      try {
+        tickLoggedIn = false;
+        tickLoginFailed = false;
 
-      await checkExternalIpChange();
-      await checkProviderSync();
-      await checkRenewals();
-      if (routerCheckPending) {
-        routerCheckPending = false;
-        await checkRouterRules();
+        await checkExternalIpChange();
+        await checkProviderSync();
+        await checkRenewals();
+        if (routerCheckPending) {
+          routerCheckPending = false;
+          await checkRouterRules();
+        }
+        await retryFailedHooks();
+      } finally {
+        running = false;
       }
-      await retryFailedHooks();
     },
 
     triggerRouterCheck(): void {
