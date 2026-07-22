@@ -37,10 +37,23 @@ export function createAzireProvider(config: {
 
     async listPorts(): Promise<ProviderPort[]> {
       const url = `${BASE_URL}?internal_ipv4=${encodeURIComponent(internalIp)}`;
-      const data = (await apiRequest(url, {
-        method: "GET",
-        headers: authHeaders,
-      })) as { data: { ports: Array<{ port: number; hidden: boolean; expires_at: number }> } };
+      let data;
+      try {
+        data = (await apiRequest(url, {
+          method: "GET",
+          headers: authHeaders,
+        })) as { data: { ports: Array<{ port: number; hidden: boolean; expires_at: number }> } };
+      } catch (err: unknown) {
+        // Azire quirk: this endpoint returns 500 "Internal error" when the
+        // account has zero forwarded ports — that state is an empty list.
+        if (
+          err instanceof Error &&
+          err.message === "Azire API error (500): Internal error"
+        ) {
+          return [];
+        }
+        throw err;
+      }
       return data.data.ports.map((p) => ({
         port: p.port,
         expiresAt: p.expires_at,

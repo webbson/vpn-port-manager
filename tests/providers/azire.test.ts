@@ -137,6 +137,24 @@ describe("createAzireProvider", () => {
     expect(result).toBe(false);
   });
 
+  it("returns empty list on zero-port 500 Internal error quirk", async () => {
+    const mockFetch = mockErrorResponse(500, "Internal error");
+    vi.stubGlobal("fetch", mockFetch);
+
+    const provider = makeProvider();
+    await expect(provider.listPorts()).resolves.toEqual([]);
+  });
+
+  it("throws on 500 with a different message", async () => {
+    const mockFetch = mockErrorResponse(500, "Service unavailable");
+    vi.stubGlobal("fetch", mockFetch);
+
+    const provider = makeProvider();
+    await expect(provider.listPorts()).rejects.toThrow(
+      "Azire API error (500): Service unavailable"
+    );
+  });
+
   it("throws on API error with status and message", async () => {
     const mockFetch = mockErrorResponse(401, "Unauthorized");
     vi.stubGlobal("fetch", mockFetch);
