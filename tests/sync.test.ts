@@ -82,6 +82,31 @@ describe("SyncWatchdog", () => {
     expect(spec.vpnPort).toBe(60000);
   });
 
+  it("resets error status to active when port reappears on provider", async () => {
+    const mappingId = db.createMapping({
+      provider: "azire",
+      vpnPort: 58216,
+      destIp: "192.168.1.100",
+      destPort: 8080,
+      protocol: "tcp",
+      label: "test",
+      status: "error",
+      expiresAt: Math.floor(Date.now() / 1000) + 86400 * 30,
+    });
+    db.updateMapping(mappingId, {
+      routerHandle: { dnatId: "dnat-1", firewallId: "fw-1" },
+    });
+
+    const provider = mockProvider([{ port: 58216, expiresAt: 9999999999 }]);
+    const router = mockRouter();
+
+    const watchdog = createSyncWatchdog({ db, provider, router, renewThresholdDays: 7 });
+    await watchdog.runOnce();
+
+    expect(provider.createPort).not.toHaveBeenCalled();
+    expect(db.getMapping(mappingId)!.status).toBe("active");
+  });
+
   it("marks truly expired ports (past expiresAt) as expired", async () => {
     const mappingId = db.createMapping({
       provider: "azire",

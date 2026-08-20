@@ -88,7 +88,19 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
     const mappings = db.listMappings().filter((m) => m.status !== "expired");
 
     for (const mapping of mappings) {
-      if (portSet.has(mapping.vpnPort)) continue;
+      if (portSet.has(mapping.vpnPort)) {
+        // Port exists on the provider again (e.g. after an Azire outage was
+        // misread as zero ports and recreate attempts failed) — heal the
+        // mapping so renewals and repairs pick it up again.
+        if (mapping.status === "error") {
+          db.updateMapping(mapping.id, { status: "active" });
+          db.logSync("sync_fix", mapping.id, {
+            reason: "provider_port_present_status_reset",
+            vpnPort: mapping.vpnPort,
+          });
+        }
+        continue;
+      }
 
       if (mapping.expiresAt <= nowSeconds) {
         db.updateMapping(mapping.id, { status: "expired" });
@@ -182,11 +194,19 @@ export function createSyncWatchdog(config: SyncConfig): SyncWatchdog {
           error: message,
         });
 
+        // Azire quirk: with zero ports on the account, port creation can also
+        // 500 — the API cannot seed its own first port. Manual creation in the
+        // provider's web manager unblocks it.
+        const zeroPortHint =
+          portSet.size === 0 && message.includes("(500)")
+            ? " Provider reports zero ports and creation is failing — create one port manually in your VPN provider's web manager to unblock the API."
+            : "";
+
         notifier.emit({
           category: "port.recreate_failed",
           severity: "error",
           title: "VPN port recreate failed",
-          message: `"${mapping.label}" (port ${oldPort}) missing from provider; recreate attempt failed: ${message}`,
+          message: `"${mapping.label}" (port ${oldPort}) missing from provider; recreate attempt failed: ${message}.${zeroPortHint}`,
           mappingId: mapping.id,
           data: { vpnPort: oldPort, error: message },
         });

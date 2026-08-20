@@ -145,14 +145,12 @@ describe("createAzireProvider", () => {
     await expect(provider.listPorts()).resolves.toEqual([]);
   });
 
-  it("throws on 500 with a different message", async () => {
-    const mockFetch = mockErrorResponse(500, "Service unavailable");
+  it("returns empty list on 500 regardless of body message", async () => {
+    const mockFetch = mockErrorResponse(500, "Internal Server Error");
     vi.stubGlobal("fetch", mockFetch);
 
     const provider = makeProvider();
-    await expect(provider.listPorts()).rejects.toThrow(
-      "Azire API error (500): Service unavailable"
-    );
+    await expect(provider.listPorts()).resolves.toEqual([]);
   });
 
   it("throws on API error with status and message", async () => {

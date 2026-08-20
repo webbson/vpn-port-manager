@@ -44,12 +44,15 @@ export function createAzireProvider(config: {
           headers: authHeaders,
         })) as { data: { ports: Array<{ port: number; hidden: boolean; expires_at: number }> } };
       } catch (err: unknown) {
-        // Azire quirk: this endpoint returns 500 "Internal error" when the
-        // account has zero forwarded ports — that state is an empty list.
+        // Azire quirk: this endpoint returns 500 when the account has zero
+        // forwarded ports — that state is an empty list. The 500 body text
+        // varies between requests, so match on status alone and log the
+        // actual message for forensics.
         if (
           err instanceof Error &&
-          err.message === "Azire API error (500): Internal error"
+          /^Azire API error \(500\):/.test(err.message)
         ) {
+          console.warn(`[azire] listPorts 500 treated as empty port list: ${err.message}`);
           return [];
         }
         throw err;
