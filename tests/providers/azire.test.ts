@@ -145,6 +145,14 @@ describe("createAzireProvider", () => {
     await expect(provider.listPorts()).resolves.toEqual([]);
   });
 
+  it("returns empty list on zero-port 404 No port forwardings found", async () => {
+    const mockFetch = mockErrorResponse(404, "No port forwardings found");
+    vi.stubGlobal("fetch", mockFetch);
+
+    const provider = makeProvider();
+    await expect(provider.listPorts()).resolves.toEqual([]);
+  });
+
   it("returns empty list on 500 regardless of body message", async () => {
     const mockFetch = mockErrorResponse(500, "Internal Server Error");
     vi.stubGlobal("fetch", mockFetch);

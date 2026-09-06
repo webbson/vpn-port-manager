@@ -44,15 +44,15 @@ export function createAzireProvider(config: {
           headers: authHeaders,
         })) as { data: { ports: Array<{ port: number; hidden: boolean; expires_at: number }> } };
       } catch (err: unknown) {
-        // Azire quirk: this endpoint returns 500 when the account has zero
-        // forwarded ports — that state is an empty list. The 500 body text
-        // varies between requests, so match on status alone and log the
-        // actual message for forensics.
+        // Azire quirk: with zero forwarded ports this endpoint has returned
+        // 500 (body text varies) and, since ~2026-09, 404 "No port
+        // forwardings found". Both mean an empty list — match on status
+        // alone and log the actual message for forensics.
         if (
           err instanceof Error &&
-          /^Azire API error \(500\):/.test(err.message)
+          /^Azire API error \((404|500)\):/.test(err.message)
         ) {
-          console.warn(`[azire] listPorts 500 treated as empty port list: ${err.message}`);
+          console.warn(`[azire] listPorts error treated as empty port list: ${err.message}`);
           return [];
         }
         throw err;
